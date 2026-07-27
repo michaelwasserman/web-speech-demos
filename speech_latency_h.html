@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Speech Timeline & Toggling</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #eee;
+    }
+
+    button {
+      padding: 10px 15px;
+      margin-bottom: 10px;
+      margin-right: 10px;
+      cursor: pointer;
+      font-weight: bold;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background: #555;
+    }
+
+    canvas {
+      background: #2a2a2a;
+      display: block;
+      margin-bottom: 10px;
+      width: 100%;
+      max-width: 1000px;
+      height: 350px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    .legend {
+      font-family: monospace;
+      font-size: 13px;
+      background: #222;
+      padding: 10px;
+      border-radius: 4px;
+      border: 1px solid #444;
+      max-width: 980px;
+      margin-bottom: 15px;
+    }
+
+    .legend span {
+      margin-right: 15px;
+    }
+
+    pre {
+      background: #222;
+      padding: 10px;
+      white-space: pre-wrap;
+      border: 1px solid #444;
+      max-height: 300px;
+      overflow-y: auto;
+      max-width: 980px;
+    }
+
+    .description {
+      font-family: monospace;
+      color: #aaa;
+      max-width: 1000px;
+      line-height: 1.5;
+      margin-bottom: 15px;
+    }
+
+    a {
+      /* float: right;
+      vertical-align: middle; */
+      color: hsl(200, 100%, 40%);
+    }
+  </style>
+</head>
+
+<body>
+  <button id="btnMic">Start Mic Transcription & Timeline</button>
+  <button id="btnFile">Play & Transcribe Audio File</button>
+  <a href="https://github.com/michaelwasserman/web-speech-demos" target="_blank">🔗&nbsp;Source</a>
+
+  <audio id="audioPlayer" src="https://raw.githubusercontent.com/web-platform-tests/wpt/master/media/speech.wav"
+    crossorigin="anonymous"></audio>
+
+  <div class="description">
+    <p><b>Toggle & Playback:</b> You can now start and stop the microphone freely. Playing the audio file works
+      independently and will automatically start the transcription session if it isn't already running.</p>
+  </div>
+
+  <canvas id="timeline" width="1000" height="350"></canvas>
+
+  <div class="legend">
+    <span style="color: #ff9800;">■ Endpointer Events</span>
+    <span style="color: #aaaaaa;">■ Interim Results</span>
+    <span style="color: #00ff00;">■ Final Results</span>
+    <span style="color: #ffffff;">■ Transcribed Text Label</span>
+  </div>
+
+  <pre id="log"></pre>
+
+  <script>
+    const canvas = document.getElementById('timeline');
+    const ctx = canvas.getContext('2d');
+    const logEl = document.getElementById('log');
+    const btnMic = document.getElementById('btnMic');
+    const btnFile = document.getElementById('btnFile');
+    const audioPlayer = document.getElementById('audioPlayer');
+
+    const log = (msg, color = '#eee') => {
+      const span = document.createElement('span');
+      span.style.color = color;
+      span.textContent = msg + '\n';
+      logEl.appendChild(span);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    const DURATION_MS = 10000;
+
+    let audioCtx, analyser, dataArray;
+    let audioHistory = [];
+    let transcripts = [];
+    let endpointerMarkers = [];
+    let streamStartStamp = 0;
+
+    // State Tracking
+    let isRecognizing = false;
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRec();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    // Log & Store Endpointer Events
+    const endpointerEvents = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend'];
+    endpointerEvents.forEach(eventName => {
+      recognition.addEventListener(eventName, (e) => {
+        log(`[EVENT: ${eventName}] timeStamp: ${e.timeStamp.toFixed(1)}ms`, '#ff9800');
+        endpointerMarkers.push({ name: eventName, time: e.timeStamp });
+      });
+    });
+
+    // Session Start
+    recognition.onstart = (e) => {
+      isRecognizing = true;
+      btnMic.innerText = "Stop Mic Transcription";
+      btnMic.style.background = "#aa0000"; // Red for active
+
+      streamStartStamp = e.timeStamp;
+      log(`[STARTED] Stream Start TimeStamp: ${streamStartStamp.toFixed(1)}ms\n`, '#ffffff');
+    };
+
+    // Session End (Manual or Automatic timeout)
+    recognition.onend = () => {
+      isRecognizing = false;
+      btnMic.innerText = "Start Mic Transcription & Timeline";
+      btnMic.style.background = "#333";
+      log(`[ENDED] Recognition stopped.\n`, '#ffffff');
+    };
+
+    recognition.onresult = (e) => {
+      const timeReceived = e.timeStamp;
+
+      for (let i = e.resultIndex; i < e.results.length; ++i) {
+        const result = e.results[i];
+        const text = result[0].transcript.trim();
+        if (!text) continue;
+
+        let audioTime = timeReceived;
+        if (result.audioStartTime !== undefined) {
+          audioTime = result.audioStartTime;
+        }
+
+        const existingLabel = transcripts.find(t => t.id === i);
+        const updateInfo = { time: audioTime, isFinal: result.isFinal };
+
+        if (existingLabel) {
+          existingLabel.text = text;
+          existingLabel.isFinal = result.isFinal;
+          existingLabel.times.push(updateInfo);
+        } else {
+          transcripts.push({
+            id: i,
+            text: text,
+            times: [updateInfo],
+            isFinal: result.isFinal
+          });
+        }
+      }
+
+      const primaryResult = e.results[e.resultIndex];
+      const primaryText = primaryResult[0].transcript.trim();
+      const isFinal = primaryResult.isFinal;
+
+      const isFinalStr = isFinal ? "(FINAL)" : "(INTERIM)";
+      const logColor = isFinal ? '#00ff00' : '#aaaaaa';
+
+      log(`${isFinalStr} "${primaryText}"\n ↳ ev.timeStamp : ${timeReceived.toFixed(1)}ms`, logColor);
+    };
+
+    recognition.onerror = e => log(`[ERROR] ${e.error}`, '#ff4444');
+
+    // Centralized Initialization
+    async function startVisualizationAndMic() {
+      // 1. Initialize Web Audio API for the Canvas (Only once)
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const source = audioCtx.createMediaStreamSource(stream);
+          source.connect(analyser);
+          requestAnimationFrame(draw);
+        } catch (err) {
+          alert('Could not start microphone: ' + err);
+          return;
+        }
+      }
+
+      // 2. Start Speech API
+      if (!isRecognizing) {
+        try {
+          recognition.start();
+        } catch (e) {
+          log(`[ERROR] Failed to start recognition: ${e.message}`, '#ff4444');
+        }
+      }
+    }
+
+    // Canvas Rendering Loop
+    function draw() {
+      requestAnimationFrame(draw);
+      const currentTime = performance.now();
+
+      analyser.getByteTimeDomainData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        const v = (dataArray[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / dataArray.length);
+
+      audioHistory.push({ time: currentTime, rms });
+
+      while (audioHistory.length > 0 && currentTime - audioHistory[0].time > DURATION_MS) {
+        audioHistory.shift();
+      }
+
+      transcripts = transcripts.filter(t => currentTime - t.times[0].time <= DURATION_MS * 1.5);
+      endpointerMarkers = endpointerMarkers.filter(m => currentTime - m.time <= DURATION_MS * 1.5);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = '#00e5ff';
+      const waveCenterY = 150;
+
+      ctx.beginPath();
+      ctx.moveTo(0, waveCenterY);
+
+      for (const point of audioHistory) {
+        const x = canvas.width - ((currentTime - point.time) / DURATION_MS) * canvas.width;
+        const h = point.rms * 300;
+        ctx.lineTo(x, waveCenterY - h);
+      }
+      for (let i = audioHistory.length - 1; i >= 0; i--) {
+        const point = audioHistory[i];
+        const x = canvas.width - ((currentTime - point.time) / DURATION_MS) * canvas.width;
+        const h = point.rms * 300;
+        ctx.lineTo(x, waveCenterY + h);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = '#888';
+      ctx.font = '12px monospace';
+      ctx.textAlign = 'center';
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 1;
+
+      for (let i = 0; i <= Math.ceil(DURATION_MS / 1000); i++) {
+        const tickTimeMs = Math.floor(currentTime / 1000) * 1000 - (i * 1000);
+        const timeDiff = currentTime - tickTimeMs;
+
+        if (timeDiff >= 0 && timeDiff <= DURATION_MS) {
+          const x = canvas.width - (timeDiff / DURATION_MS) * canvas.width;
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, 30);
+          ctx.stroke();
+          ctx.fillText(`${(tickTimeMs / 1000).toFixed(1)}s`, x, 45);
+        }
+      }
+
+      ctx.lineWidth = 1;
+      for (let i = 0; i < endpointerMarkers.length; i++) {
+        const marker = endpointerMarkers[i];
+        const x = canvas.width - ((currentTime - marker.time) / DURATION_MS) * canvas.width;
+
+        const textY = 60 + (i % 3) * 15;
+
+        ctx.fillStyle = '#ff9800';
+        ctx.strokeStyle = '#ff9800';
+        ctx.font = 'bold 12px sans-serif';
+
+        ctx.fillText(marker.name, x, textY);
+
+        ctx.beginPath();
+        ctx.moveTo(x, textY + 5);
+        ctx.lineTo(x, waveCenterY - 40);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(x, waveCenterY - 30);
+        ctx.lineTo(x - 4, waveCenterY - 40);
+        ctx.lineTo(x + 4, waveCenterY - 40);
+        ctx.fill();
+      }
+
+      ctx.lineWidth = 1;
+      for (let i = 0; i < transcripts.length; i++) {
+        const t = transcripts[i];
+
+        const anchorTime = t.times[0].time;
+        const textTargetX = canvas.width - ((currentTime - anchorTime) / DURATION_MS) * canvas.width;
+        const textY = 270 + (i % 3) * 25;
+
+        ctx.fillStyle = t.isFinal ? '#ffffff' : '#aaaaaa';
+        ctx.font = t.isFinal ? 'bold 14px sans-serif' : 'italic 14px sans-serif';
+
+        const label = `${t.text} (${t.times.length} updates)`;
+        ctx.fillText(label, textTargetX, textY);
+
+        for (const update of t.times) {
+          const arrowX = canvas.width - ((currentTime - update.time) / DURATION_MS) * canvas.width;
+          const arrowColor = update.isFinal ? '#00ff00' : '#aaaaaa';
+
+          ctx.strokeStyle = arrowColor;
+          ctx.fillStyle = arrowColor;
+
+          ctx.beginPath();
+          ctx.moveTo(textTargetX, textY - 18);
+          ctx.lineTo(arrowX, waveCenterY + 40);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(arrowX, waveCenterY + 30);
+          ctx.lineTo(arrowX - 4, waveCenterY + 40);
+          ctx.lineTo(arrowX + 4, waveCenterY + 40);
+          ctx.fill();
+        }
+      }
+    }
+
+    // Toggle Button Logic
+    btnMic.onclick = () => {
+      if (isRecognizing) {
+        recognition.stop();
+      } else {
+        startVisualizationAndMic();
+      }
+    };
+
+    // Audio File Button Logic
+    btnFile.onclick = () => {
+      log('[INFO] Playing audio file. Ensure speakers are on!', '#00e5ff');
+      audioPlayer.currentTime = 0;
+      audioPlayer.play().catch(e => log(`[ERROR] Audio playback failed: ${e.message}`, '#ff4444'));
+
+      // Auto-start transcription if it isn't running
+      if (!isRecognizing) {
+        startVisualizationAndMic();
+      }
+    };
+  </script>
+</body>
+
+</html>
