@@ -149,13 +149,18 @@
     <span style="color: #ff9800;">■ Endpointer Events</span>
     <span style="color: #aaaaaa;">■ Interim Results</span>
     <span style="color: #00ff00;">■ Final Results</span>
-    <span style="color: #ffffff;">■ Transcribed Text Label</span>
+    <span style="color: #ffffff;">■ Transcribed Text</span>
     <span style="color: #ffff00;">■ <a
         href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md#web-idl-definition"
         target="_blank">audioStartTime</a></span>
     <span style="color: #ff00ff;">■ <a
         href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md#web-idl-definition"
-        target="_blank">audioEndTime</a></span>
+        target="_blank">audioEndTime</a></span><br>
+    <span style="color: #888; margin-left: 8px;">Latency:</span>
+    <span style="color: #00ff00;">■ ≤1000ms</span>
+    <span style="color: #ffff00;">■ ≤1500ms</span>
+    <span style="color: #ff9800;">■ ≤2000ms</span>
+    <span style="color: #ff4444;">■ >2000ms</span>
   </div>
 
   <pre id="log"></pre>
@@ -171,11 +176,55 @@
         const timelineTimeInfo = document.getElementById('timelineTimeInfo');
         const btnLive = document.getElementById('btnLive');
 
+            const getLatencyColor = (ms) => {
+              if (typeof ms !== 'number' || isNaN(ms)) return '#aaa';
+              if (ms <= 1000) return '#00ff00';
+              if (ms <= 1500) return '#ffff00';
+              if (ms <= 2000) return '#ff9800';
+              return '#ff4444';
+            };
+
     const log = (msg, color = '#eee') => {
       const span = document.createElement('span');
       span.style.color = color;
       span.textContent = msg + '\n';
       logEl.appendChild(span);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    const logResult = (result, id) => {
+      const isFinal = result.isFinal;
+      const text = result[0].transcript.trim();
+      const timeReceived = result.timeReceived;
+      const container = document.createElement('div');
+      container.style.color = isFinal ? '#00ff00' : '#aaaaaa';
+      container.style.whiteSpace = 'pre-wrap';
+      container.style.marginBottom = '6px';
+
+      let textContent = `[RESULT #${id}] ${isFinal ? '(FINAL)' : '(INTERIM)'} "${text}"\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
+
+      if (typeof result.audioStartTime === 'number') {
+        textContent += `\n ↳ audioStartTime  : ${result.audioStartTime.toFixed(1)}ms`;
+      }
+      if (typeof result.audioEndTime === 'number') {
+        textContent += `\n ↳ audioEndTime    : ${result.audioEndTime.toFixed(1)}ms\n ↳ Latency (Event - AudioEnd): `;
+      }
+
+      container.textContent = textContent;
+
+      if (typeof result.audioEndTime === 'number') {
+        const latency = timeReceived - result.audioEndTime;
+        const badge = document.createElement('span');
+        badge.style.background = getLatencyColor(latency);
+        badge.style.color = '#111';
+        badge.style.fontWeight = 'bold';
+        badge.style.padding = '1px 6px';
+        badge.style.borderRadius = '3px';
+        badge.textContent = `${latency.toFixed(1)}ms`;
+        container.appendChild(badge);
+      }
+
+      logEl.appendChild(container);
       logEl.scrollTop = logEl.scrollHeight;
     };
 
@@ -185,7 +234,6 @@
     let audioHistory = [];
     let transcripts = [];
     let endpointerMarkers = [];
-    let streamStartStamp = 0;
     let sessionStartTime = null;
     let stoppedViewEndTime = 0;
     let viewEndTime = 0;
@@ -218,14 +266,9 @@
       btnMic.innerText = "Stop Mic Transcription";
       btnMic.style.background = "#aa0000"; // Red for active
 
-      streamStartStamp = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
-      const now = performance.now();
-      if (sessionStartTime === null) {
-        sessionStartTime = now;
-      }
-      recognition.originTime = streamStartStamp || now;
+      sessionStartTime ??= (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
       sessionResultOffset = transcripts.length;
-      log(`[STARTED] Stream Start TimeStamp: ${streamStartStamp.toFixed(1)}ms\n`, '#ffffff');
+      log(`[STARTED] Stream Start TimeStamp: ${sessionStartTime.toFixed(1)}ms\n`, '#ffffff');
     };
 
     // Session End (Manual or Automatic timeout)
@@ -241,61 +284,27 @@
 
     // Recognition Results Handler
     recognition.onresult = (e) => {
-      const timeReceived = e.timeStamp;
-      const originTime = recognition.originTime || 0;
-
       for (let i = e.resultIndex; i < e.results.length; ++i) {
         const result = e.results[i];
         if (!result || !result[0]) continue;
 
         const globalId = sessionResultOffset + i;
-        const existing = transcripts.find(t => t.id === globalId);
+        let existing = transcripts.find(t => t.id === globalId);
 
         // Do not update or accumulate timestamps on results that have already been finalized
-        if (existing && existing.isFinal) {
+        if (existing && existing.results[existing.results.length - 1].isFinal) {
           continue;
         }
 
-        const text = result[0].transcript.trim();
-        const isFinal = result.isFinal;
-        const audioStartTime = result.audioStartTime;
-        const audioEndTime = result.audioEndTime;
-
-        const update = {
-          timeReceived: timeReceived,
-          originTime: originTime,
-          audioStartTime: audioStartTime,
-          audioEndTime: audioEndTime,
-          isFinal: isFinal
-        };
+        result.timeReceived = e.timeStamp;
 
         if (existing) {
-          existing.text = text;
-          existing.isFinal = isFinal;
-          existing.updates.push(update);
+          existing.results.push(result);
         } else {
-          transcripts.push({
-            id: globalId,
-            text: text,
-            isFinal: isFinal,
-            originTime: originTime,
-            updates: [update]
-          });
+          transcripts.push({ id: globalId, results: [result] });
         }
 
-        const isFinalStr = isFinal ? "(FINAL)" : "(INTERIM)";
-        const logColor = isFinal ? '#00ff00' : '#aaaaaa';
-
-        let logMsg = `[RESULT #${globalId}] ${isFinalStr} "${text}"\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
-        if (typeof audioStartTime === 'number') {
-          logMsg += `\n ↳ audioStartTime  : ${audioStartTime.toFixed(1)}ms`;
-        }
-        if (typeof audioEndTime === 'number') {
-          logMsg += `\n ↳ audioEndTime    : ${audioEndTime.toFixed(1)}ms`;
-          const latency = timeReceived - (originTime + audioEndTime);
-          logMsg += `\n ↳ Latency (Event-End): ${latency.toFixed(1)}ms`;
-        }
-        log(logMsg, logColor);
+        logResult(result, globalId);
       }
     };
 
@@ -331,7 +340,6 @@
       if (!isRecognizing) {
         try {
           recognition.start();
-          recognition.originTime = performance.now();
         } catch (e) {
           log(`[ERROR] Failed to start recognition: ${e.message}`, '#ff4444');
         }
@@ -343,9 +351,7 @@
       requestAnimationFrame(draw);
       const currentTime = performance.now();
 
-      if (sessionStartTime === null) {
-        sessionStartTime = currentTime;
-      }
+      sessionStartTime ??= currentTime;
 
       if (isRecognizing) {
         analyser.getByteTimeDomainData(dataArray);
@@ -468,19 +474,41 @@
 
       // Transcripts
       ctx.lineWidth = 1;
-      for (let i = 0; i < transcripts.length; i++) {
-        const t = transcripts[i];
+      for (const t of transcripts) {
+        const first = t.results[0];
+        const latest = t.results[t.results.length - 1];
 
-        const anchorTime = t.updates[0].timeReceived;
-        const textTargetX = canvas.width - ((viewEndTime - anchorTime) / DURATION_MS) * canvas.width;
-        const textY = 270 + (i % 3) * 25;
+        const textTargetX = canvas.width - ((viewEndTime - first.timeReceived) / DURATION_MS) * canvas.width;
+        const textY = 270 + (t.id % 3) * 25;
 
-        ctx.fillStyle = t.isFinal ? '#ffffff' : '#aaaaaa';
-        ctx.font = t.isFinal ? 'bold 14px sans-serif' : 'italic 14px sans-serif';
-        ctx.textAlign = 'center';
+        let latencyText = '';
+        let latColor = null;
+        if (typeof latest.audioEndTime === 'number') {
+          const lat = latest.timeReceived - latest.audioEndTime;
+          latencyText = ` (${lat.toFixed(0)}ms)`;
+          latColor = getLatencyColor(lat);
+        }
 
-        const label = `${t.text} (${t.updates.length} updates)`;
-        ctx.fillText(label, textTargetX, textY);
+        const mainLabel = `${latest[0].transcript.trim()} (${t.results.length} updates)`;
+        ctx.font = latest.isFinal ? 'bold 14px sans-serif' : 'italic 14px sans-serif';
+
+        if (latColor) {
+          const mainWidth = ctx.measureText(mainLabel).width;
+          const latWidth = ctx.measureText(latencyText).width;
+          const startX = textTargetX - (mainWidth + latWidth) / 2;
+
+          ctx.textAlign = 'left';
+          ctx.fillStyle = latest.isFinal ? '#ffffff' : '#aaaaaa';
+          ctx.fillText(mainLabel, startX, textY);
+
+          ctx.fillStyle = latColor;
+          ctx.font = 'bold 14px sans-serif';
+          ctx.fillText(latencyText, startX + mainWidth, textY);
+        } else {
+          ctx.textAlign = 'center';
+          ctx.fillStyle = latest.isFinal ? '#ffffff' : '#aaaaaa';
+          ctx.fillText(mainLabel, textTargetX, textY);
+        }
 
         const drawArrow = (targetTime, color) => {
           if (typeof targetTime !== 'number' || isNaN(targetTime)) return;
@@ -500,20 +528,18 @@
           ctx.fill();
         };
 
-        for (const update of t.updates) {
+        for (const r of t.results) {
           // Event timestamp
-          drawArrow(update.timeReceived, update.isFinal ? '#00ff00' : '#aaaaaa');
-
-          const origin = update.originTime ?? t.originTime ?? recognition.originTime ?? 0;
+          drawArrow(r.timeReceived, r.isFinal ? '#00ff00' : '#aaaaaa');
 
           // audioStartTime
-          if (typeof update.audioStartTime === 'number') {
-            drawArrow(update.audioStartTime + origin, '#ffff00');
+          if (typeof r.audioStartTime === 'number') {
+            drawArrow(r.audioStartTime, '#ffff00');
           }
 
           // audioEndTime
-          if (typeof update.audioEndTime === 'number') {
-            drawArrow(update.audioEndTime + origin, '#ff00ff');
+          if (typeof r.audioEndTime === 'number') {
+            drawArrow(r.audioEndTime, '#ff00ff');
           }
         }
       }
