@@ -186,10 +186,11 @@
     let transcripts = [];
     let endpointerMarkers = [];
     let streamStartStamp = 0;
-        let sessionStartTime = null;
-        let stoppedViewEndTime = 0;
-        let viewEndTime = 0;
-        let autoScroll = true;
+    let sessionStartTime = null;
+    let stoppedViewEndTime = 0;
+    let viewEndTime = 0;
+    let autoScroll = true;
+    let sessionResultOffset = 0;
 
     // State Tracking
     let isRecognizing = false;
@@ -198,8 +199,8 @@
     const recognition = new SpeechRec();
     recognition.continuous = true;
     recognition.interimResults = true;
-        recognition.maxAlternatives = 1;
-        recognition.lang = navigator.language || 'en-US';
+    recognition.maxAlternatives = 1;
+    recognition.lang = navigator.language || 'en-US';
 
     // Log & Store Endpointer Events
     const endpointerEvents = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend'];
@@ -222,7 +223,8 @@
       if (sessionStartTime === null) {
         sessionStartTime = now;
       }
-      recognition.originTime = now;
+      recognition.originTime = streamStartStamp || now;
+      sessionResultOffset = transcripts.length;
       log(`[STARTED] Stream Start TimeStamp: ${streamStartStamp.toFixed(1)}ms\n`, '#ffffff');
     };
 
@@ -237,137 +239,73 @@
       log(`[ENDED] Recognition stopped.\n`, '#ffffff');
     };
 
-      function toTimelineTime(val) {
-        if (typeof val !== 'number' || isNaN(val)) return undefined;
-        // If already an absolute DOMHighResTimeStamp (near performance.now timeline)
-        if (val > 500 && (streamStartStamp <= 0 || val >= streamStartStamp * 0.2)) {
-          return val;
-        }
-        // If in seconds (e.g. 1.2s into speech)
-        if (val < 120 && (streamStartStamp > 1000 || performance.now() > 1000)) {
-          val = val * 1000;
-        }
-        // If relative offset from stream start
-        return (streamStartStamp || sessionStartTime || 0) + val;
-      }
-
-      function extractAudioTimes(result, alt, e) {
-        let start = undefined;
-        let end = undefined;
-
-        const objects = [result, alt, e];
-        const startKeys = ['audioStartTime', 'audioStart', 'startTime', 'start', 'audioStartTimeMs', 'audioStreamStartTime'];
-        const endKeys = ['audioEndTime', 'audioEnd', 'endTime', 'end', 'audioEndTimeMs', 'audioStreamEndTime'];
-
-        for (const obj of objects) {
-          if (!obj) continue;
-          if (start === undefined) {
-            for (const k of startKeys) {
-              if (k in obj && obj[k] !== undefined && obj[k] !== null) {
-                const num = Number(obj[k]);
-                if (!isNaN(num)) { start = num; break; }
-              }
-            }
-          }
-          if (end === undefined) {
-            for (const k of endKeys) {
-              if (k in obj && obj[k] !== undefined && obj[k] !== null) {
-                const num = Number(obj[k]);
-                if (!isNaN(num)) { end = num; break; }
-              }
-            }
-          }
-        }
-
-        return { audioStartTime: start, audioEndTime: end };
-      }
-
-      // Recognition Results Handler
+    // Recognition Results Handler
     recognition.onresult = (e) => {
-      try {
-        const timeReceived = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
-        const startIndex = (e && typeof e.resultIndex === 'number') ? e.resultIndex : 0;
-        const results = e ? e.results : null;
+      const timeReceived = e.timeStamp;
+      const originTime = recognition.originTime || 0;
 
-        if (!results || results.length === 0) {
-          log(`[RESULT] Event received but results list is empty.`, '#aaaaaa');
-          return;
+      for (let i = e.resultIndex; i < e.results.length; ++i) {
+        const result = e.results[i];
+        if (!result || !result[0]) continue;
+
+        const globalId = sessionResultOffset + i;
+        const existing = transcripts.find(t => t.id === globalId);
+
+        // Do not update or accumulate timestamps on results that have already been finalized
+        if (existing && existing.isFinal) {
+          continue;
         }
 
-        for (let i = startIndex; i < results.length; ++i) {
-          const result = results[i] || (results.item ? results.item(i) : null);
-          if (!result) continue;
+        const text = result[0].transcript.trim();
+        const isFinal = result.isFinal;
+        const audioStartTime = result.audioStartTime;
+        const audioEndTime = result.audioEndTime;
 
-          const alt = result[0] || (result.item ? result.item(0) : null);
-          const rawTranscript = (alt && typeof alt.transcript === 'string') ? alt.transcript : ((typeof result.transcript === 'string') ? result.transcript : '');
-          const text = rawTranscript.trim();
+        const update = {
+          timeReceived: timeReceived,
+          originTime: originTime,
+          audioStartTime: audioStartTime,
+          audioEndTime: audioEndTime,
+          isFinal: isFinal
+        };
 
-          // Extract timing properties (checking both result and alternative objects)
-          const { audioStartTime, audioEndTime } = extractAudioTimes(result, alt, e);
-
-          let audioTime = timeReceived;
-          if (audioStartTime !== undefined) {
-            audioTime = toTimelineTime(audioStartTime);
-          }
-
-          const existingLabel = transcripts.find(t => t.id === i);
-          const updateInfo = {
-            time: audioTime,
-            timeReceived: timeReceived,
-            audioStartTime: audioStartTime,
-            audioEndTime: audioEndTime,
-            isFinal: !!result.isFinal
-          };
-
-          if (existingLabel) {
-            if (text) existingLabel.text = text;
-            existingLabel.isFinal = !!result.isFinal;
-            existingLabel.times.push(updateInfo);
-          } else {
-            transcripts.push({
-              id: i,
-              text: text || '(unrecognized speech)',
-              times: [updateInfo],
-              isFinal: !!result.isFinal
-            });
-          }
-
-          const isFinalStr = result.isFinal ? "(FINAL)" : "(INTERIM)";
-          const logColor = result.isFinal ? '#00ff00' : '#aaaaaa';
-          const displayText = text || rawTranscript || '(empty transcript)';
-
-          let logLines = [];
-          logLines.push(`[RESULT #${i}] ${isFinalStr} "${displayText}"`);
-          logLines.push(` ↳ ev.timeStamp : ${timeReceived.toFixed(1)}ms`);
-          if (streamStartStamp > 0) {
-            logLines.push(` ↳ Stream Delta : ${(timeReceived - streamStartStamp).toFixed(1)}ms`);
-          }
-          if (audioStartTime !== undefined) {
-            logLines.push(` ↳ audioStartTime : ${audioStartTime.toFixed(1)}ms`);
-          }
-          if (audioEndTime !== undefined) {
-            logLines.push(` ↳ audioEndTime   : ${audioEndTime.toFixed(1)}ms`);
-            logLines.push(` ↳ Audio Latency  : ${(timeReceived - audioEndTime).toFixed(1)}ms`);
-          }
-          if (alt && alt.confidence !== undefined && alt.confidence > 0) {
-            logLines.push(` ↳ Confidence     : ${(alt.confidence * 100).toFixed(1)}%`);
-          }
-
-          log(logLines.join('\n'), logColor);
+        if (existing) {
+          existing.text = text;
+          existing.isFinal = isFinal;
+          existing.updates.push(update);
+        } else {
+          transcripts.push({
+            id: globalId,
+            text: text,
+            isFinal: isFinal,
+            originTime: originTime,
+            updates: [update]
+          });
         }
-      } catch (err) {
-        console.error('Error handling speech recognition result:', err);
-        log(`[ERROR in onresult: ${err.message}]`, '#ff4444');
+
+        const isFinalStr = isFinal ? "(FINAL)" : "(INTERIM)";
+        const logColor = isFinal ? '#00ff00' : '#aaaaaa';
+
+        let logMsg = `[RESULT #${globalId}] ${isFinalStr} "${text}"\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
+        if (typeof audioStartTime === 'number') {
+          logMsg += `\n ↳ audioStartTime  : ${audioStartTime.toFixed(1)}ms`;
+        }
+        if (typeof audioEndTime === 'number') {
+          logMsg += `\n ↳ audioEndTime    : ${audioEndTime.toFixed(1)}ms`;
+          const latency = timeReceived - (originTime + audioEndTime);
+          logMsg += `\n ↳ Latency (Event-End): ${latency.toFixed(1)}ms`;
+        }
+        log(logMsg, logColor);
       }
     };
 
-      recognition.onerror = (e) => {
-        log(`[ERROR: ${e.error}] ${e.message || ''}`, '#ff4444');
-      };
+    recognition.onerror = (e) => {
+      log(`[ERROR: ${e.error}] ${e.message || ''}`, '#ff4444');
+    };
 
-      recognition.onnomatch = () => {
-        log('[NOMATCH] No speech recognized.', '#ffaa00');
-      };
+    recognition.onnomatch = () => {
+      log('[NOMATCH] No speech recognized.', '#ffaa00');
+    };
 
     // Centralized Initialization
     async function startVisualizationAndMic() {
@@ -533,7 +471,7 @@
       for (let i = 0; i < transcripts.length; i++) {
         const t = transcripts[i];
 
-        const anchorTime = t.times[0].timeReceived ?? t.times[0].time;
+        const anchorTime = t.updates[0].timeReceived;
         const textTargetX = canvas.width - ((viewEndTime - anchorTime) / DURATION_MS) * canvas.width;
         const textY = 270 + (i % 3) * 25;
 
@@ -541,11 +479,11 @@
         ctx.font = t.isFinal ? 'bold 14px sans-serif' : 'italic 14px sans-serif';
         ctx.textAlign = 'center';
 
-        const label = `${t.text} (${t.times.length} updates)`;
+        const label = `${t.text} (${t.updates.length} updates)`;
         ctx.fillText(label, textTargetX, textY);
 
         const drawArrow = (targetTime, color) => {
-          if (targetTime === undefined || isNaN(targetTime)) return;
+          if (typeof targetTime !== 'number' || isNaN(targetTime)) return;
           const arrowX = canvas.width - ((viewEndTime - targetTime) / DURATION_MS) * canvas.width;
           ctx.strokeStyle = color;
           ctx.fillStyle = color;
@@ -562,21 +500,24 @@
           ctx.fill();
         };
 
-        for (const update of t.times) {
-          const eventColor = update.isFinal ? '#00ff00' : '#aaaaaa';
-          drawArrow(update.timeReceived ?? update.time, eventColor);
+        for (const update of t.updates) {
+          // Event timestamp
+          drawArrow(update.timeReceived, update.isFinal ? '#00ff00' : '#aaaaaa');
 
-          if (update.audioStartTime !== undefined) {
-            const tStart = toTimelineTime(update.audioStartTime);
-            drawArrow(tStart, '#ffff00');
+          const origin = update.originTime ?? t.originTime ?? recognition.originTime ?? 0;
+
+          // audioStartTime
+          if (typeof update.audioStartTime === 'number') {
+            drawArrow(update.audioStartTime + origin, '#ffff00');
           }
-          if (update.audioEndTime !== undefined) {
-            const tEnd = toTimelineTime(update.audioEndTime);
-            drawArrow(tEnd, '#ff00ff');
+
+          // audioEndTime
+          if (typeof update.audioEndTime === 'number') {
+            drawArrow(update.audioEndTime + origin, '#ff00ff');
           }
         }
       }
-      }
+    }
 
       // Timeline Scrollbar events
       timelineScroll.oninput = () => {
@@ -591,50 +532,50 @@
         } else {
           viewEndTime = maxTime;
         }
-        };
+      };
 
-        btnLive.onclick = () => {
-          autoScroll = true;
-          const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-          viewEndTime = currentNow;
-          timelineScroll.value = 1000;
-        };
+      btnLive.onclick = () => {
+        autoScroll = true;
+        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+        viewEndTime = currentNow;
+        timelineScroll.value = 1000;
+      };
 
-        // Canvas Drag and Wheel Scrolling
-        let isDraggingCanvas = false;
-        let dragStartX = 0;
-        let dragStartViewEndTime = 0;
+      // Canvas Drag and Wheel Scrolling
+      let isDraggingCanvas = false;
+      let dragStartX = 0;
+      let dragStartViewEndTime = 0;
 
-        canvas.addEventListener('mousedown', (e) => {
-          isDraggingCanvas = true;
-          dragStartX = e.clientX;
-          dragStartViewEndTime = viewEndTime;
-          autoScroll = false;
-        });
+      canvas.addEventListener('mousedown', (e) => {
+        isDraggingCanvas = true;
+        dragStartX = e.clientX;
+        dragStartViewEndTime = viewEndTime;
+        autoScroll = false;
+      });
 
-        window.addEventListener('mousemove', (e) => {
-          if (!isDraggingCanvas) return;
-          const dx = e.clientX - dragStartX;
-          const dt = (dx / canvas.clientWidth) * DURATION_MS;
-          const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-          const minTime = sessionStartTime || (currentNow - DURATION_MS);
-          const minViewEnd = minTime + DURATION_MS;
-          viewEndTime = Math.max(minViewEnd, Math.min(currentNow, dragStartViewEndTime - dt));
-        });
+      window.addEventListener('mousemove', (e) => {
+        if (!isDraggingCanvas) return;
+        const dx = e.clientX - dragStartX;
+        const dt = (dx / canvas.clientWidth) * DURATION_MS;
+        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+        const minTime = sessionStartTime || (currentNow - DURATION_MS);
+        const minViewEnd = minTime + DURATION_MS;
+        viewEndTime = Math.max(minViewEnd, Math.min(currentNow, dragStartViewEndTime - dt));
+      });
 
-        window.addEventListener('mouseup', () => {
-          isDraggingCanvas = false;
-        });
+      window.addEventListener('mouseup', () => {
+        isDraggingCanvas = false;
+      });
 
-        canvas.addEventListener('wheel', (e) => {
-          e.preventDefault();
-          autoScroll = false;
-          const dt = (e.deltaX || e.deltaY) * (DURATION_MS / 1000);
-          const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-          const minTime = sessionStartTime || (currentNow - DURATION_MS);
-          const minViewEnd = minTime + DURATION_MS;
-          viewEndTime = Math.max(minViewEnd, Math.min(currentNow, viewEndTime + dt));
-        }, { passive: false });
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        autoScroll = false;
+        const dt = (e.deltaX || e.deltaY) * (DURATION_MS / 1000);
+        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+        const minTime = sessionStartTime || (currentNow - DURATION_MS);
+        const minViewEnd = minTime + DURATION_MS;
+        viewEndTime = Math.max(minViewEnd, Math.min(currentNow, viewEndTime + dt));
+      }, { passive: false });
 
     // Toggle Button Logic
     btnMic.onclick = () => {
