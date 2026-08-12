@@ -203,17 +203,17 @@
 
       let textContent = `[RESULT #${id}] ${isFinal ? '(FINAL)' : '(INTERIM)'} "${text}"\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
 
-      if (typeof result.audioStartTime === 'number') {
-        textContent += `\n ↳ audioStartTime  : ${result.audioStartTime.toFixed(1)}ms`;
+      if (typeof result.relativeStartTime === 'number') {
+        textContent += `\n ↳ audioStartTime (relative) : ${result.relativeStartTime.toFixed(1)}ms`;
       }
-      if (typeof result.audioEndTime === 'number') {
-        textContent += `\n ↳ audioEndTime    : ${result.audioEndTime.toFixed(1)}ms\n ↳ Latency (Event - AudioEnd): `;
+      if (typeof result.relativeEndTime === 'number') {
+        textContent += `\n ↳ audioEndTime (relative)   : ${result.relativeEndTime.toFixed(1)}ms\n ↳ Latency (Event - AudioEnd): `;
       }
 
       container.textContent = textContent;
 
-      if (typeof result.audioEndTime === 'number') {
-        const latency = timeReceived - result.audioEndTime;
+      if (typeof result.relativeEndTime === 'number') {
+        const latency = timeReceived - result.relativeEndTime;
         const badge = document.createElement('span');
         badge.style.background = getLatencyColor(latency);
         badge.style.color = '#111';
@@ -297,6 +297,20 @@
         }
 
         result.timeReceived = e.timeStamp;
+
+        // Offset result timestamps by the recognition session start time.
+        // This aligns the timestamps with live audio timeline presentation,
+        // and for latency calculations against the DOMEvent timeStamps.
+        Object.defineProperty(result, 'relativeStartTime', {
+          value: result.audioStartTime + sessionStartTime,
+          writable: true,
+          configurable: true
+        });
+        Object.defineProperty(result, 'relativeEndTime', {
+          value: result.audioEndTime + sessionStartTime,
+          writable: true,
+          configurable: true
+        });
 
         if (existing) {
           existing.results.push(result);
@@ -532,14 +546,14 @@
           // Event timestamp
           drawArrow(r.timeReceived, r.isFinal ? '#00ff00' : '#aaaaaa');
 
-          // audioStartTime
-          if (typeof r.audioStartTime === 'number') {
-            drawArrow(r.audioStartTime, '#ffff00');
+          // audioStartTime (relativeStartTime)
+          if (typeof r.relativeStartTime === 'number') {
+            drawArrow(r.relativeStartTime, '#ffff00');
           }
 
-          // audioEndTime
-          if (typeof r.audioEndTime === 'number') {
-            drawArrow(r.audioEndTime, '#ff00ff');
+          // audioEndTime (relativeEndTime)
+          if (typeof r.relativeEndTime === 'number') {
+            drawArrow(r.relativeEndTime, '#ff00ff');
           }
         }
       }
