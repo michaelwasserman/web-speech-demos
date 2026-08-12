@@ -148,19 +148,19 @@
   <div class="legend">
     <span style="color: #ff9800;">■ Endpointer Events</span>
     <span style="color: #aaaaaa;">■ Interim Results</span>
-    <span style="color: #00ff00;">■ Final Results</span>
+    <span style="color: #6666ff;">■ Final Results</span>
     <span style="color: #ffffff;">■ Transcribed Text</span>
-    <span style="color: #ffff00;">■ <a
+    <span style="color: #00ccff;">■ <a
         href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md#web-idl-definition"
         target="_blank">audioStartTime</a></span>
     <span style="color: #ff00ff;">■ <a
         href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md#web-idl-definition"
         target="_blank">audioEndTime</a></span><br>
     <span style="color: #888; margin-left: 8px;">Latency:</span>
-    <span style="color: #00ff00;">■ ≤1000ms</span>
-    <span style="color: #ffff00;">■ ≤1500ms</span>
-    <span style="color: #ff9800;">■ ≤2000ms</span>
-    <span style="color: #ff4444;">■ >2000ms</span>
+    <span style="color: #00ff00;">■ ≤350ms</span>
+    <span style="color: #ffff00;">■ ≤700ms</span>
+    <span style="color: #ff9800;">■ ≤1000ms</span>
+    <span style="color: #ff4444;">■ >1000ms</span>
   </div>
 
   <pre id="log"></pre>
@@ -178,11 +178,51 @@
 
             const getLatencyColor = (ms) => {
               if (typeof ms !== 'number' || isNaN(ms)) return '#aaa';
-              if (ms <= 1000) return '#00ff00';
-              if (ms <= 1500) return '#ffff00';
-              if (ms <= 2000) return '#ff9800';
+              if (ms <= 350) return '#00ff00';
+              if (ms <= 700) return '#ffff00';
+              if (ms <= 1000) return '#ff9800';
               return '#ff4444';
             };
+
+                                  const alignWords = (prevWords, newText, currentLatency) => {
+                                    const newTokens = newText ? newText.split(/\s+/).filter(Boolean) : [];
+                                    if (!prevWords || prevWords.length === 0) {
+                                      return newTokens.map(w => ({ text: w, latency: currentLatency }));
+                                    }
+
+                                    // Match common prefix
+                                    let prefixLen = 0;
+                                    while (
+                                      prefixLen < prevWords.length &&
+                                      prefixLen < newTokens.length &&
+                                      prevWords[prefixLen].text === newTokens[prefixLen]
+                                    ) {
+                                      prefixLen++;
+                                    }
+
+                                    // Match common suffix
+                                    let suffixLen = 0;
+                                    while (
+                                      suffixLen < (prevWords.length - prefixLen) &&
+                                      suffixLen < (newTokens.length - prefixLen) &&
+                                      prevWords[prevWords.length - 1 - suffixLen].text === newTokens[newTokens.length - 1 - suffixLen]
+                                    ) {
+                                      suffixLen++;
+                                    }
+
+                                    const result = [];
+                                    for (let i = 0; i < prefixLen; i++) {
+                                      result.push(prevWords[i]);
+                                    }
+                                    const middleEnd = newTokens.length - suffixLen;
+                                    for (let i = prefixLen; i < middleEnd; i++) {
+                                      result.push({ text: newTokens[i], latency: currentLatency });
+                                    }
+                                    for (let i = prevWords.length - suffixLen; i < prevWords.length; i++) {
+                                      result.push(prevWords[i]);
+                                    }
+                                    return result;
+                                  };
 
     const log = (msg, color = '#eee') => {
       const span = document.createElement('span');
@@ -192,16 +232,40 @@
       logEl.scrollTop = logEl.scrollHeight;
     };
 
-    const logResult = (result, id) => {
-      const isFinal = result.isFinal;
-      const text = result[0].transcript.trim();
+                                  const logResult = (result, id, words) => {
+                                    const isFinal = result.isFinal;
       const timeReceived = result.timeReceived;
       const container = document.createElement('div');
-      container.style.color = isFinal ? '#00ff00' : '#aaaaaa';
+                                  container.style.color = isFinal ? '#6666ff' : '#aaaaaa';
       container.style.whiteSpace = 'pre-wrap';
       container.style.marginBottom = '6px';
 
-      let textContent = `[RESULT #${id}] ${isFinal ? '(FINAL)' : '(INTERIM)'} "${text}"\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
+                                  const headerSpan = document.createElement('span');
+                                  headerSpan.textContent = `[RESULT #${id}] ${isFinal ? '(FINAL)' : '(INTERIM)'} "`;
+                                  container.appendChild(headerSpan);
+
+                                  if (words && words.length > 0) {
+                                    words.forEach((w, idx) => {
+                                      const wordSpan = document.createElement('span');
+                                      wordSpan.style.color = getLatencyColor(w.latency);
+                                      wordSpan.style.fontWeight = 'bold';
+                                      wordSpan.textContent = w.text;
+                                      container.appendChild(wordSpan);
+                                      if (idx < words.length - 1) {
+                                        container.appendChild(document.createTextNode(' '));
+                                      }
+                                    });
+                                  } else {
+                                    const textSpan = document.createElement('span');
+                                    textSpan.textContent = result[0]?.transcript?.trim() || '';
+                                    container.appendChild(textSpan);
+                                  }
+
+                                  const quoteCloseSpan = document.createElement('span');
+                                  quoteCloseSpan.textContent = '"';
+                                  container.appendChild(quoteCloseSpan);
+
+                                  let textContent = `\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
 
       if (typeof result.relativeStartTime === 'number') {
         textContent += `\n ↳ audioStartTime (relative) : ${result.relativeStartTime.toFixed(1)}ms`;
@@ -210,7 +274,9 @@
         textContent += `\n ↳ audioEndTime (relative)   : ${result.relativeEndTime.toFixed(1)}ms\n ↳ Latency (Event - AudioEnd): `;
       }
 
-      container.textContent = textContent;
+                                  const detailsSpan = document.createElement('span');
+                                  detailsSpan.textContent = textContent;
+                                  container.appendChild(detailsSpan);
 
       if (typeof result.relativeEndTime === 'number') {
         const latency = timeReceived - result.relativeEndTime;
@@ -279,6 +345,7 @@
       viewEndTime = stoppedViewEndTime;
       btnMic.innerText = "Start Mic Transcription & Timeline";
       btnMic.style.background = "#333";
+      sessionStartTime = null;
       log(`[ENDED] Recognition stopped.\n`, '#ffffff');
     };
 
@@ -312,13 +379,22 @@
           configurable: true
         });
 
+        const latency = (typeof result.relativeEndTime === 'number')
+          ? (result.timeReceived - result.relativeEndTime)
+          : null;
+
+        const newText = result[0].transcript.trim();
+        const prevWords = existing ? existing.words : [];
+        const updatedWords = alignWords(prevWords, newText, latency);
+
         if (existing) {
+          existing.words = updatedWords;
           existing.results.push(result);
         } else {
-          transcripts.push({ id: globalId, results: [result] });
+          transcripts.push({ id: globalId, words: updatedWords, results: [result] });
         }
 
-        logResult(result, globalId);
+        logResult(result, globalId, updatedWords);
       }
     };
 
@@ -495,33 +571,36 @@
         const textTargetX = canvas.width - ((viewEndTime - first.timeReceived) / DURATION_MS) * canvas.width;
         const textY = 270 + (t.id % 3) * 25;
 
-        let latencyText = '';
-        let latColor = null;
-        if (typeof latest.audioEndTime === 'number') {
-          const lat = latest.timeReceived - latest.audioEndTime;
-          latencyText = ` (${lat.toFixed(0)}ms)`;
-          latColor = getLatencyColor(lat);
-        }
-
-        const mainLabel = `${latest[0].transcript.trim()} (${t.results.length} updates)`;
+        const words = t.words || [];
         ctx.font = latest.isFinal ? 'bold 14px sans-serif' : 'italic 14px sans-serif';
+        const spaceWidth = ctx.measureText(' ').width;
+        const suffix = ` (${t.results.length} updates)`;
+        const suffixWidth = ctx.measureText(suffix).width;
 
-        if (latColor) {
-          const mainWidth = ctx.measureText(mainLabel).width;
-          const latWidth = ctx.measureText(latencyText).width;
-          const startX = textTargetX - (mainWidth + latWidth) / 2;
+        if (words.length > 0) {
+          let wordsTotalWidth = 0;
+          for (let i = 0; i < words.length; i++) {
+            wordsTotalWidth += ctx.measureText(words[i].text).width;
+            if (i < words.length - 1) wordsTotalWidth += spaceWidth;
+          }
+
+          const totalWidth = wordsTotalWidth + suffixWidth;
+          let curX = textTargetX - totalWidth / 2;
 
           ctx.textAlign = 'left';
-          ctx.fillStyle = latest.isFinal ? '#ffffff' : '#aaaaaa';
-          ctx.fillText(mainLabel, startX, textY);
+          for (let i = 0; i < words.length; i++) {
+            const w = words[i];
+            ctx.fillStyle = getLatencyColor(w.latency);
+            ctx.fillText(w.text, curX, textY);
+            curX += ctx.measureText(w.text).width + spaceWidth;
+          }
 
-          ctx.fillStyle = latColor;
-          ctx.font = 'bold 14px sans-serif';
-          ctx.fillText(latencyText, startX + mainWidth, textY);
+          ctx.fillStyle = latest.isFinal ? '#ffffff' : '#888888';
+          ctx.fillText(suffix, curX - spaceWidth, textY);
         } else {
           ctx.textAlign = 'center';
           ctx.fillStyle = latest.isFinal ? '#ffffff' : '#aaaaaa';
-          ctx.fillText(mainLabel, textTargetX, textY);
+          ctx.fillText(`${latest[0].transcript.trim()}${suffix}`, textTargetX, textY);
         }
 
         const drawArrow = (targetTime, color) => {
@@ -548,7 +627,7 @@
 
           // audioStartTime (relativeStartTime)
           if (typeof r.relativeStartTime === 'number') {
-            drawArrow(r.relativeStartTime, '#ffff00');
+            drawArrow(r.relativeStartTime, '#00ccff');
           }
 
           // audioEndTime (relativeEndTime)
