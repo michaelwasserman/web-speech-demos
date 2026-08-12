@@ -232,54 +232,54 @@
       logEl.scrollTop = logEl.scrollHeight;
     };
 
-                                  const logResult = (result, id, words) => {
-                                    const isFinal = result.isFinal;
+    const logResult = (result, id, words) => {
+      const isFinal = result.isFinal;
       const timeReceived = result.timeReceived;
       const container = document.createElement('div');
-                                  container.style.color = isFinal ? '#6666ff' : '#aaaaaa';
+      container.style.color = isFinal ? '#6666ff' : '#aaaaaa';
       container.style.whiteSpace = 'pre-wrap';
       container.style.marginBottom = '6px';
 
-                                  const headerSpan = document.createElement('span');
-                                  headerSpan.textContent = `[RESULT #${id}] ${isFinal ? '(FINAL)' : '(INTERIM)'} "`;
-                                  container.appendChild(headerSpan);
+      const headerSpan = document.createElement('span');
+      headerSpan.textContent = `[RESULT #${id}] ${isFinal ? '(FINAL)' : '(INTERIM)'} "`;
+      container.appendChild(headerSpan);
 
-                                  if (words && words.length > 0) {
-                                    words.forEach((w, idx) => {
-                                      const wordSpan = document.createElement('span');
-                                      wordSpan.style.color = getLatencyColor(w.latency);
-                                      wordSpan.style.fontWeight = 'bold';
-                                      wordSpan.textContent = w.text;
-                                      container.appendChild(wordSpan);
-                                      if (idx < words.length - 1) {
-                                        container.appendChild(document.createTextNode(' '));
-                                      }
-                                    });
-                                  } else {
-                                    const textSpan = document.createElement('span');
-                                    textSpan.textContent = result[0]?.transcript?.trim() || '';
-                                    container.appendChild(textSpan);
-                                  }
-
-                                  const quoteCloseSpan = document.createElement('span');
-                                  quoteCloseSpan.textContent = '"';
-                                  container.appendChild(quoteCloseSpan);
-
-                                  let textContent = `\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
-
-      if (typeof result.relativeStartTime === 'number') {
-        textContent += `\n ↳ audioStartTime (relative) : ${result.relativeStartTime.toFixed(1)}ms`;
-      }
-      if (typeof result.relativeEndTime === 'number') {
-        textContent += `\n ↳ audioEndTime (relative)   : ${result.relativeEndTime.toFixed(1)}ms\n ↳ Latency (Event - AudioEnd): `;
+      if (words && words.length > 0) {
+        words.forEach((w, idx) => {
+          const wordSpan = document.createElement('span');
+          wordSpan.style.color = getLatencyColor(w.latency);
+          wordSpan.style.fontWeight = 'bold';
+          wordSpan.textContent = w.text;
+          container.appendChild(wordSpan);
+          if (idx < words.length - 1) {
+            container.appendChild(document.createTextNode(' '));
+          }
+        });
+      } else {
+        const textSpan = document.createElement('span');
+        textSpan.textContent = result[0]?.transcript?.trim() || '';
+        container.appendChild(textSpan);
       }
 
-                                  const detailsSpan = document.createElement('span');
-                                  detailsSpan.textContent = textContent;
-                                  container.appendChild(detailsSpan);
+      const quoteCloseSpan = document.createElement('span');
+      quoteCloseSpan.textContent = '"';
+      container.appendChild(quoteCloseSpan);
 
-      if (typeof result.relativeEndTime === 'number') {
-        const latency = timeReceived - result.relativeEndTime;
+      let textContent = `\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
+
+      if (typeof result.absoluteAudioStart === 'number') {
+        textContent += `\n ↳ audioStartTime (absolute) : ${result.absoluteAudioStart.toFixed(1)}ms`;
+      }
+      if (typeof result.absoluteAudioEnd === 'number') {
+        textContent += `\n ↳ audioEndTime (absolute)   : ${result.absoluteAudioEnd.toFixed(1)}ms\n ↳ Latency (Event - AudioEnd): `;
+      }
+
+      const detailsSpan = document.createElement('span');
+      detailsSpan.textContent = textContent;
+      container.appendChild(detailsSpan);
+
+      if (typeof result.absoluteAudioEnd === 'number') {
+        const latency = timeReceived - result.absoluteAudioEnd;
         const badge = document.createElement('span');
         badge.style.background = getLatencyColor(latency);
         badge.style.color = '#111';
@@ -301,7 +301,7 @@
     let transcripts = [];
     let endpointerMarkers = [];
     let timelineStartTime = null;
-    let currentSessionStartTime = 0;
+    let audioOriginTime = 0;
     let stoppedViewEndTime = 0;
     let viewEndTime = 0;
     let autoScroll = true;
@@ -321,6 +321,9 @@
     const endpointerEvents = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend'];
     endpointerEvents.forEach(eventName => {
       recognition.addEventListener(eventName, (e) => {
+        if (eventName === 'audiostart') {
+          audioOriginTime = e.timeStamp;
+        }
         log(`[EVENT: ${eventName}] timeStamp: ${e.timeStamp.toFixed(1)}ms`, '#ff9800');
         endpointerMarkers.push({ name: eventName, time: e.timeStamp });
       });
@@ -333,10 +336,10 @@
       btnMic.innerText = "Stop Mic Transcription";
       btnMic.style.background = "#aa0000"; // Red for active
 
-      currentSessionStartTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
-      timelineStartTime ??= currentSessionStartTime;
+      audioOriginTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
+      timelineStartTime ??= audioOriginTime;
       sessionResultOffset = transcripts.length;
-      log(`[STARTED] Stream Start TimeStamp: ${currentSessionStartTime.toFixed(1)}ms\n`, '#ffffff');
+      log(`[STARTED] Stream Start TimeStamp: ${audioOriginTime.toFixed(1)}ms\n`, '#ffffff');
     };
 
     // Session End (Manual or Automatic timeout)
@@ -366,27 +369,25 @@
 
         result.timeReceived = e.timeStamp;
 
-        // Offset result timestamps by the recognition session start time.
-        // This aligns the timestamps with live audio timeline presentation,
-        // and for latency calculations against the DOMEvent timeStamps.
-        Object.defineProperty(result, 'relativeStartTime', {
-          value: result.audioStartTime + currentSessionStartTime,
+        // Convert stream offsets to document time origin coordinates per explainer
+        Object.defineProperty(result, 'absoluteAudioStart', {
+          value: (typeof result.audioStartTime === 'number') ? audioOriginTime + result.audioStartTime : undefined,
           writable: true,
           configurable: true
         });
-        Object.defineProperty(result, 'relativeEndTime', {
-          value: result.audioEndTime + currentSessionStartTime,
+        Object.defineProperty(result, 'absoluteAudioEnd', {
+          value: (typeof result.audioEndTime === 'number') ? audioOriginTime + result.audioEndTime : undefined,
           writable: true,
           configurable: true
         });
 
-        const latency = (typeof result.relativeEndTime === 'number')
-          ? (result.timeReceived - result.relativeEndTime)
+        const asrLatencyMs = (typeof result.absoluteAudioEnd === 'number')
+          ? (result.timeReceived - result.absoluteAudioEnd)
           : null;
 
         const newText = result[0].transcript.trim();
         const prevWords = existing ? existing.words : [];
-        const updatedWords = alignWords(prevWords, newText, latency);
+        const updatedWords = alignWords(prevWords, newText, asrLatencyMs);
 
         if (existing) {
           existing.words = updatedWords;
@@ -626,14 +627,14 @@
           // Event timestamp
           drawArrow(r.timeReceived, r.isFinal ? '#6666ff' : '#aaaaaa');
 
-          // audioStartTime (relativeStartTime)
-          if (typeof r.relativeStartTime === 'number') {
-            drawArrow(r.relativeStartTime, '#00ccff');
+          // audioStartTime (absoluteAudioStart)
+          if (typeof r.absoluteAudioStart === 'number') {
+            drawArrow(r.absoluteAudioStart, '#00ccff');
           }
 
-          // audioEndTime (relativeEndTime)
-          if (typeof r.relativeEndTime === 'number') {
-            drawArrow(r.relativeEndTime, '#ff00ff');
+          // audioEndTime (absoluteAudioEnd)
+          if (typeof r.absoluteAudioEnd === 'number') {
+            drawArrow(r.absoluteAudioEnd, '#ff00ff');
           }
         }
       }
