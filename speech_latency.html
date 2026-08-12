@@ -300,7 +300,8 @@
     let audioHistory = [];
     let transcripts = [];
     let endpointerMarkers = [];
-    let sessionStartTime = null;
+    let timelineStartTime = null;
+    let currentSessionStartTime = 0;
     let stoppedViewEndTime = 0;
     let viewEndTime = 0;
     let autoScroll = true;
@@ -332,9 +333,10 @@
       btnMic.innerText = "Stop Mic Transcription";
       btnMic.style.background = "#aa0000"; // Red for active
 
-      sessionStartTime ??= (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
+      currentSessionStartTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
+      timelineStartTime ??= currentSessionStartTime;
       sessionResultOffset = transcripts.length;
-      log(`[STARTED] Stream Start TimeStamp: ${sessionStartTime.toFixed(1)}ms\n`, '#ffffff');
+      log(`[STARTED] Stream Start TimeStamp: ${currentSessionStartTime.toFixed(1)}ms\n`, '#ffffff');
     };
 
     // Session End (Manual or Automatic timeout)
@@ -345,7 +347,6 @@
       viewEndTime = stoppedViewEndTime;
       btnMic.innerText = "Start Mic Transcription & Timeline";
       btnMic.style.background = "#333";
-      sessionStartTime = null;
       log(`[ENDED] Recognition stopped.\n`, '#ffffff');
     };
 
@@ -369,12 +370,12 @@
         // This aligns the timestamps with live audio timeline presentation,
         // and for latency calculations against the DOMEvent timeStamps.
         Object.defineProperty(result, 'relativeStartTime', {
-          value: result.audioStartTime + sessionStartTime,
+          value: result.audioStartTime + currentSessionStartTime,
           writable: true,
           configurable: true
         });
         Object.defineProperty(result, 'relativeEndTime', {
-          value: result.audioEndTime + sessionStartTime,
+          value: result.audioEndTime + currentSessionStartTime,
           writable: true,
           configurable: true
         });
@@ -441,7 +442,7 @@
       requestAnimationFrame(draw);
       const currentTime = performance.now();
 
-      sessionStartTime ??= currentTime;
+      timelineStartTime ??= currentTime;
 
       if (isRecognizing) {
         analyser.getByteTimeDomainData(dataArray);
@@ -463,7 +464,7 @@
       }
 
       const currentEffectiveTime = isRecognizing ? currentTime : (stoppedViewEndTime || currentTime);
-      const minTime = sessionStartTime;
+      const minTime = timelineStartTime;
       const maxTime = currentEffectiveTime;
       const minViewEnd = minTime + DURATION_MS;
 
@@ -476,14 +477,14 @@
           const scrollFrac = Math.max(0, Math.min(1, (viewEndTime - minViewEnd) / (maxTime - minViewEnd)));
           timelineScroll.value = Math.round(scrollFrac * 1000);
         }
-        const viewStartSec = Math.max(0, (viewEndTime - DURATION_MS - sessionStartTime) / 1000).toFixed(1);
-        const viewEndSec = Math.max(0, (viewEndTime - sessionStartTime) / 1000).toFixed(1);
-        const totalSec = Math.max(0, (maxTime - sessionStartTime) / 1000).toFixed(1);
+        const viewStartSec = Math.max(0, (viewEndTime - DURATION_MS - timelineStartTime) / 1000).toFixed(1);
+        const viewEndSec = Math.max(0, (viewEndTime - timelineStartTime) / 1000).toFixed(1);
+        const totalSec = Math.max(0, (maxTime - timelineStartTime) / 1000).toFixed(1);
         timelineTimeInfo.textContent = `${viewStartSec}s - ${viewEndSec}s (of ${totalSec}s)${autoScroll ? ' [Live]' : ''}`;
       } else {
         timelineScroll.value = 1000;
         timelineScroll.disabled = true;
-        const totalSec = Math.max(0, (maxTime - sessionStartTime) / 1000).toFixed(1);
+        const totalSec = Math.max(0, (maxTime - timelineStartTime) / 1000).toFixed(1);
         timelineTimeInfo.textContent = `0.0s - ${totalSec}s${autoScroll ? ' [Live]' : ''}`;
       }
 
@@ -642,7 +643,7 @@
       timelineScroll.oninput = () => {
         autoScroll = false;
         const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = sessionStartTime || (currentNow - DURATION_MS);
+        const minTime = timelineStartTime || (currentNow - DURATION_MS);
         const maxTime = currentNow;
         const minViewEnd = minTime + DURATION_MS;
         if (maxTime > minViewEnd) {
@@ -677,7 +678,7 @@
         const dx = e.clientX - dragStartX;
         const dt = (dx / canvas.clientWidth) * DURATION_MS;
         const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = sessionStartTime || (currentNow - DURATION_MS);
+        const minTime = timelineStartTime || (currentNow - DURATION_MS);
         const minViewEnd = minTime + DURATION_MS;
         viewEndTime = Math.max(minViewEnd, Math.min(currentNow, dragStartViewEndTime - dt));
       });
@@ -691,7 +692,7 @@
         autoScroll = false;
         const dt = (e.deltaX || e.deltaY) * (DURATION_MS / 1000);
         const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = sessionStartTime || (currentNow - DURATION_MS);
+        const minTime = timelineStartTime || (currentNow - DURATION_MS);
         const minViewEnd = minTime + DURATION_MS;
         viewEndTime = Math.max(minViewEnd, Math.min(currentNow, viewEndTime + dt));
       }, { passive: false });
