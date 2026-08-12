@@ -132,8 +132,15 @@
     crossorigin="anonymous"></audio>
 
   <div class="description">
-    <p><b>Toggle & Playback:</b> You can now start and stop the microphone freely. Playing the audio file works
-      independently and will automatically start the transcription session if it isn't already running.</p>
+    <p>Demo exploring <a href="https://webaudio.github.io/web-speech-api" target="_blank">Web Speech API</a> timestamps and
+      latency; with support for <a
+        href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md"
+        target="_blank">proposed</a> SpeechRecognitionResult attributes.
+      <br>
+      See <a href="https://github.com/WebAudio/web-speech-api/issues/191" target="_blank">Issue #191</a>,
+      and test <a href="https://chromestatus.com/feature/5811907077472256" target="_blank">Chrome's implementation</a> with
+      `--enable-blink-features=WebSpeechTimestamps`.
+    </p>
   </div>
 
   <canvas id="timeline" width="1000" height="350"></canvas>
