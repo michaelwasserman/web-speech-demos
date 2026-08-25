@@ -12,7 +12,7 @@
       color: #eee;
     }
 
-    button {
+    button, select {
       padding: 10px 15px;
       margin-bottom: 10px;
       margin-right: 10px;
@@ -23,10 +23,16 @@
       border: 1px solid #555;
       border-radius: 4px;
       transition: background 0.2s;
+      vertical-align: middle;
     }
 
-    button:hover {
+    button:hover, select:hover {
       background: #555;
+    }
+
+    select option {
+      background: #333;
+      color: #fff;
     }
 
     canvas {
@@ -126,6 +132,12 @@
 <body>
   <button id="btnMic">Start Mic Transcription & Timeline</button>
   <button id="btnFile">Play & Transcribe Audio File</button>
+  <label for="qualitySelect" style="font-weight: bold; margin-left: 5px; margin-right: 5px; vertical-align: middle;">Quality:</label>
+  <select id="qualitySelect">
+    <option value="">&lt;none&gt; (undefined)</option>
+    <option value="command">command (SODA)</option>
+    <option value="dictation">dictation (Small Expert)</option>
+  </select>
   <a href="https://github.com/michaelwasserman/web-speech-demos" target="_blank">🔗&nbsp;Source</a>
 
   <audio id="audioPlayer" src="https://raw.githubusercontent.com/web-platform-tests/wpt/master/media/speech.wav"
@@ -178,6 +190,7 @@
     const logEl = document.getElementById('log');
     const btnMic = document.getElementById('btnMic');
     const btnFile = document.getElementById('btnFile');
+    const qualitySelect = document.getElementById('qualitySelect');
     const audioPlayer = document.getElementById('audioPlayer');
         const timelineScroll = document.getElementById('timelineScroll');
         const timelineTimeInfo = document.getElementById('timelineTimeInfo');
@@ -324,6 +337,39 @@
     recognition.maxAlternatives = 1;
     recognition.lang = navigator.language || 'en-US';
 
+    const checkQualityAvailability = async () => {
+      const selectedQuality = qualitySelect.value;
+      if (selectedQuality) {
+        recognition.quality = selectedQuality;
+      } else {
+        delete recognition.quality;
+        recognition.quality = undefined;
+      }
+
+      const qualityLabel = selectedQuality ? `"${selectedQuality}"` : '<none> (undefined)';
+      const checkAvailableFn = SpeechRec?.available || window.SpeechRecognition?.available || window.webkitSpeechRecognition?.available;
+
+      if (typeof checkAvailableFn === 'function') {
+        try {
+          const options = { langs: [recognition.lang], quality: recognition.quality };
+          const availability = await checkAvailableFn.call(SpeechRec, options);
+          const availStr = typeof availability === 'object' ? JSON.stringify(availability) : String(availability);
+          log(`[AVAILABILITY] Quality: ${qualityLabel}, Lang: ${recognition.lang} -> ${availStr}`, '#00e5ff');
+        } catch (err) {
+          log(`[AVAILABILITY ERROR] Quality: ${qualityLabel}, Lang: ${recognition.lang} -> ${err.message || err}`, '#ff4444');
+        }
+      } else {
+        log(`[AVAILABILITY] SpeechRecognition.available() is not supported. Quality set to: ${qualityLabel}`, '#aaaaaa');
+      }
+    };
+
+    qualitySelect.addEventListener('change', () => {
+      checkQualityAvailability();
+    });
+
+    // Check initial availability
+    checkQualityAvailability();
+
     // Log & Store Endpointer Events
     const endpointerEvents = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend'];
     endpointerEvents.forEach(eventName => {
@@ -438,6 +484,12 @@
       // 2. Start Speech API
       if (!isRecognizing) {
         try {
+          if (qualitySelect.value) {
+            recognition.quality = qualitySelect.value;
+          } else {
+            delete recognition.quality;
+            recognition.quality = undefined;
+          }
           recognition.start();
         } catch (e) {
           log(`[ERROR] Failed to start recognition: ${e.message}`, '#ff4444');
