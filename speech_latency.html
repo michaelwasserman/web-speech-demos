@@ -216,7 +216,7 @@
     <button id="btnOptions" type="button">Options ▾</button>
     <div id="optionsMenu" class="options-menu">
       <div class="option-row">
-        <label for="qualitySelect">Quality:</label>
+        <label for="qualitySelect">quality:</label>
         <select id="qualitySelect">
           <option value="">&lt;none&gt; (undefined)</option>
           <option value="command" selected="true">command (SODA)</option>
@@ -224,11 +224,7 @@
         </select>
       </div>
       <div class="option-row">
-        <label for="chkProcessLocally">processLocally:</label>
-        <input type="checkbox" id="chkProcessLocally" checked>
-      </div>
-      <div class="option-row">
-        <label for="txtLang">Language:</label>
+        <label for="txtLang">language:</label>
         <input type="text" id="txtLang">
       </div>
     </div>
@@ -290,7 +286,6 @@
     const btnOptions = document.getElementById('btnOptions');
     const optionsMenu = document.getElementById('optionsMenu');
     const qualitySelect = document.getElementById('qualitySelect');
-    const chkProcessLocally = document.getElementById('chkProcessLocally');
     const txtLang = document.getElementById('txtLang');
     const audioPlayer = document.getElementById('audioPlayer');
     const timelineScroll = document.getElementById('timelineScroll');
@@ -443,140 +438,153 @@
     let autoScroll = true;
     let sessionResultOffset = 0;
     let isRecognizing = false;
-    let recognition;
 
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    window.currentRecognition = null;
     txtLang.value = navigator.language || 'en-US';
 
-    const checkAvailability = async () => {
-      const SpeechRec = SpeechRecognition || webkitSpeechRecognition;
-      recognition = new SpeechRec();
+    const endpointerEvents = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend'];
+
+    function resetRecognitionSession() {
+      if (isRecognizing && window.currentRecognition) {
+        try {
+          window.currentRecognition.abort();
+        } catch (e) {}
+      }
+
+      if (!SpeechRec) return null;
+
+      const recognition = new SpeechRec();
       recognition.continuous = true;
-      recognition.processLocally = chkProcessLocally.checked;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      recognition.lang = txtLang.value.trim();
+      recognition.lang = txtLang.value.trim() || navigator.language || 'en-US';
+      recognition.quality = qualitySelect.value || undefined;
+
+      // Log & Store Endpointer Events
+      endpointerEvents.forEach(eventName => {
+        recognition.addEventListener(eventName, (e) => {
+          if (eventName === 'audiostart') {
+            audioOriginTime = e.timeStamp;
+          }
+          log(`[EVENT: ${eventName}] timeStamp: ${e.timeStamp.toFixed(1)}ms`, '#ff9800');
+          endpointerMarkers.push({ name: eventName, time: e.timeStamp });
+        });
+      });
+
+      // Session Start
+      recognition.onstart = (e) => {
+        isRecognizing = true;
+        autoScroll = true;
+        btnMic.innerText = "Stop Mic Transcription";
+        btnMic.style.background = "#aa0000"; // Red for active
+
+        audioOriginTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
+        timelineStartTime ??= audioOriginTime;
+        sessionResultOffset = transcripts.length;
+        log(`[STARTED] Stream Start TimeStamp: ${audioOriginTime.toFixed(1)}ms\n`, '#ffffff');
+      };
+
+      // Session End (Manual or Automatic timeout)
+      recognition.onend = () => {
+        isRecognizing = false;
+        autoScroll = false;
+        stoppedViewEndTime = performance.now();
+        viewEndTime = stoppedViewEndTime;
+        btnMic.innerText = "Start Mic Transcription & Timeline";
+        btnMic.style.background = "#333";
+        log(`[ENDED] Recognition stopped.\n`, '#ffffff');
+      };
+
+      // Recognition Results Handler
+      recognition.onresult = (e) => {
+        for (let i = e.resultIndex; i < e.results.length; ++i) {
+          const result = e.results[i];
+          if (!result || !result[0]) continue;
+
+          const globalId = sessionResultOffset + i;
+          let existing = transcripts.find(t => t.id === globalId);
+
+          // Do not update or accumulate timestamps on results that have already been finalized
+          if (existing && existing.results[existing.results.length - 1].isFinal) {
+            continue;
+          }
+
+          result.timeReceived = e.timeStamp;
+
+          // Convert stream offsets to document time origin coordinates per explainer
+          Object.defineProperty(result, 'absoluteAudioStart', {
+            value: (typeof result.audioStartTime === 'number') ? audioOriginTime + result.audioStartTime : undefined,
+            writable: true,
+            configurable: true
+          });
+          Object.defineProperty(result, 'absoluteAudioEnd', {
+            value: (typeof result.audioEndTime === 'number') ? audioOriginTime + result.audioEndTime : undefined,
+            writable: true,
+            configurable: true
+          });
+
+          const asrLatencyMs = (typeof result.absoluteAudioEnd === 'number')
+            ? (result.timeReceived - result.absoluteAudioEnd)
+            : null;
+
+          const newText = result[0].transcript.trim();
+          const prevWords = existing ? existing.words : [];
+          const updatedWords = alignWords(prevWords, newText, asrLatencyMs);
+
+          if (existing) {
+            existing.words = updatedWords;
+            existing.results.push(result);
+          } else {
+            transcripts.push({ id: globalId, words: updatedWords, results: [result] });
+          }
+
+          logResult(result, globalId, updatedWords);
+        }
+      };
+
+      recognition.onerror = (e) => {
+        log(`[ERROR: ${e.error}] ${e.message || ''}`, '#ff4444');
+      };
+
+      recognition.onnomatch = () => {
+        log('[NOMATCH] No speech recognized.', '#ffaa00');
+      };
+
+      window.currentRecognition = recognition;
+      return recognition;
+    }
+
+    const checkAvailability = async () => {
+      const recognition = resetRecognitionSession();
+      if (!recognition) return;
 
       let options = {
         langs: [recognition.lang],
-        processLocally: recognition.processLocally,
+        processLocally: true,
         quality: qualitySelect.value || undefined,
       };
+      const optionsStr = `${recognition.lang} - ${options.quality}`;
       if (typeof SpeechRec?.available === 'function') {
         try {
-          const availability = await SpeechRec?.available(options);
-          log(`[AVAILABILITY] Options: ${JSON.stringify(options)} -> ${availability}`, '#aaffaa');
+          const availability = await SpeechRec.available(options);
+          log(`[AVAILABILITY] ${optionsStr} -> ${availability}`, '#aaffaa');
           if (availability === 'downloadable') {
-            log(`[DOWNLOADING] Options: ${JSON.stringify(options)} -> ${availability}`, '#aaffaa');
-            const installed = await SpeechRec?.install(options);
-            if (installed) {
-              log(`[INSTALLED] Options: ${JSON.stringify(options)} -> ${installed}`, '#aaffaa');
-            } else {
-              log(`[INSTALL FAILED] Options: ${JSON.stringify(options)} -> ${installed}`, '#ff4444');
-            }
+            log(`[DOWNLOADING] ${optionsStr}`, '#aaffaa');
+            const installed = typeof SpeechRec.install === 'function' ? await SpeechRec.install(options) : false;
+            log(`[INSTALL] ${optionsStr} ${installed ? 'SUCCEEDED' : 'FAILED'}`, '#aaffaa');
           }
         } catch (err) {
-          log(`[AVAILABILITY ERROR] Options: ${JSON.stringify(options)} -> ${err.message || err}`, '#ff4444');
+          log(`[AVAILABILITY ERROR] Options: ${optionsStr} -> ${err.message || err}`, '#ff4444');
         }
       } else {
-        log(`[AVAILABILITY] SpeechRecognition.available() is not supported. Options: ${JSON.stringify(options)}`, '#aaaaaa');
+        log(`[AVAILABILITY] SpeechRecognition.available() is not supported. Options: ${optionsStr}`, '#aaaaaa');
       }
     };
 
     qualitySelect.addEventListener('change', checkAvailability);
-    chkProcessLocally.addEventListener('change', checkAvailability);
     txtLang.addEventListener('change', checkAvailability);
     checkAvailability();
-
-    // Log & Store Endpointer Events
-    const endpointerEvents = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend'];
-    endpointerEvents.forEach(eventName => {
-      recognition.addEventListener(eventName, (e) => {
-        if (eventName === 'audiostart') {
-          audioOriginTime = e.timeStamp;
-        }
-        log(`[EVENT: ${eventName}] timeStamp: ${e.timeStamp.toFixed(1)}ms`, '#ff9800');
-        endpointerMarkers.push({ name: eventName, time: e.timeStamp });
-      });
-    });
-
-    // Session Start
-    recognition.onstart = (e) => {
-      isRecognizing = true;
-      autoScroll = true;
-      btnMic.innerText = "Stop Mic Transcription";
-      btnMic.style.background = "#aa0000"; // Red for active
-
-      audioOriginTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
-      timelineStartTime ??= audioOriginTime;
-      sessionResultOffset = transcripts.length;
-      log(`[STARTED] Stream Start TimeStamp: ${audioOriginTime.toFixed(1)}ms\n`, '#ffffff');
-    };
-
-    // Session End (Manual or Automatic timeout)
-    recognition.onend = () => {
-      isRecognizing = false;
-      autoScroll = false;
-      stoppedViewEndTime = performance.now();
-      viewEndTime = stoppedViewEndTime;
-      btnMic.innerText = "Start Mic Transcription & Timeline";
-      btnMic.style.background = "#333";
-      log(`[ENDED] Recognition stopped.\n`, '#ffffff');
-    };
-
-    // Recognition Results Handler
-    recognition.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; ++i) {
-        const result = e.results[i];
-        if (!result || !result[0]) continue;
-
-        const globalId = sessionResultOffset + i;
-        let existing = transcripts.find(t => t.id === globalId);
-
-        // Do not update or accumulate timestamps on results that have already been finalized
-        if (existing && existing.results[existing.results.length - 1].isFinal) {
-          continue;
-        }
-
-        result.timeReceived = e.timeStamp;
-
-        // Convert stream offsets to document time origin coordinates per explainer
-        Object.defineProperty(result, 'absoluteAudioStart', {
-          value: (typeof result.audioStartTime === 'number') ? audioOriginTime + result.audioStartTime : undefined,
-          writable: true,
-          configurable: true
-        });
-        Object.defineProperty(result, 'absoluteAudioEnd', {
-          value: (typeof result.audioEndTime === 'number') ? audioOriginTime + result.audioEndTime : undefined,
-          writable: true,
-          configurable: true
-        });
-
-        const asrLatencyMs = (typeof result.absoluteAudioEnd === 'number')
-          ? (result.timeReceived - result.absoluteAudioEnd)
-          : null;
-
-        const newText = result[0].transcript.trim();
-        const prevWords = existing ? existing.words : [];
-        const updatedWords = alignWords(prevWords, newText, asrLatencyMs);
-
-        if (existing) {
-          existing.words = updatedWords;
-          existing.results.push(result);
-        } else {
-          transcripts.push({ id: globalId, words: updatedWords, results: [result] });
-        }
-
-        logResult(result, globalId, updatedWords);
-      }
-    };
-
-    recognition.onerror = (e) => {
-      log(`[ERROR: ${e.error}] ${e.message || ''}`, '#ff4444');
-    };
-
-    recognition.onnomatch = () => {
-      log('[NOMATCH] No speech recognized.', '#ffaa00');
-    };
 
     // Centralized Initialization
     async function startVisualizationAndMic() {
@@ -601,10 +609,10 @@
       // 2. Start Speech API
       if (!isRecognizing) {
         try {
-          recognition.lang = txtLang.value.trim() || navigator.language || 'en-US';
-          recognition.processLocally = chkProcessLocally.checked;
-          recognition.quality = qualitySelect.value ? qualitySelect.value : undefined;
-          recognition.start();
+          if (!window.currentRecognition) {
+            resetRecognitionSession();
+          }
+          window.currentRecognition.start();
         } catch (e) {
           log(`[ERROR] Failed to start recognition: ${e.message}`, '#ff4444');
         }
@@ -874,7 +882,7 @@
     // Toggle Button Logic
     btnMic.onclick = () => {
       if (isRecognizing) {
-        recognition.stop();
+        window.currentRecognition?.stop();
       } else {
         startVisualizationAndMic();
       }
