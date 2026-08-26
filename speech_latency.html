@@ -23,10 +23,96 @@
       border: 1px solid #555;
       border-radius: 4px;
       transition: background 0.2s;
+      vertical-align: middle;
     }
 
     button:hover {
       background: #555;
+    }
+
+    .options-container {
+      display: inline-block;
+      position: relative;
+      vertical-align: middle;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+
+    .options-container button {
+      margin-right: 0;
+      margin-bottom: 0;
+    }
+
+    .options-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 5px);
+      left: 0;
+      z-index: 100;
+      background: #252525;
+      border: 1px solid #555;
+      border-radius: 6px;
+      padding: 12px 14px;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+      min-width: 280px;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .options-menu.open {
+      display: flex;
+    }
+
+    .options-menu .option-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    .options-menu .option-row label {
+      font-weight: bold;
+      color: #ddd;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .options-menu select,
+    .options-menu input[type="text"] {
+      padding: 6px 10px;
+      margin: 0;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: inherit;
+      box-sizing: border-box;
+    }
+
+    .options-menu select {
+      cursor: pointer;
+    }
+
+    .options-menu select option {
+      background: #333;
+      color: #fff;
+    }
+
+    .options-menu input[type="text"] {
+      width: 140px;
+    }
+
+    .options-menu input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: #00e5ff;
+      width: 16px;
+      height: 16px;
+      margin: 0;
     }
 
     canvas {
@@ -126,19 +212,38 @@
 <body>
   <button id="btnMic">Start Mic Transcription & Timeline</button>
   <button id="btnFile">Play & Transcribe Audio File</button>
+  <div class="options-container">
+    <button id="btnOptions" type="button">Options ▾</button>
+    <div id="optionsMenu" class="options-menu">
+      <div class="option-row">
+        <label for="qualitySelect">quality:</label>
+        <select id="qualitySelect">
+          <option value="">&lt;none&gt; (undefined)</option>
+          <option value="command" selected="true">command (SODA)</option>
+          <option value="dictation">dictation (Small Expert)</option>
+        </select>
+      </div>
+      <div class="option-row">
+        <label for="txtLang">language:</label>
+        <input type="text" id="txtLang">
+      </div>
+    </div>
+  </div>
   <a href="https://github.com/michaelwasserman/web-speech-demos" target="_blank">🔗&nbsp;Source</a>
 
   <audio id="audioPlayer" src="https://raw.githubusercontent.com/web-platform-tests/wpt/master/media/speech.wav"
     crossorigin="anonymous"></audio>
 
   <div class="description">
-    <p>Demo exploring <a href="https://webaudio.github.io/web-speech-api" target="_blank">Web Speech API</a> timestamps and
+    <p>Demo exploring <a href="https://webaudio.github.io/web-speech-api" target="_blank">Web Speech API</a> timestamps
+      and
       latency; with support for <a
         href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md"
         target="_blank">proposed</a> SpeechRecognitionResult attributes.
       <br>
       See <a href="https://github.com/WebAudio/web-speech-api/issues/191" target="_blank">Issue #191</a>,
-      and test <a href="https://chromestatus.com/feature/5811907077472256" target="_blank">Chrome's implementation</a> with
+      and test <a href="https://chromestatus.com/feature/5811907077472256" target="_blank">Chrome's implementation</a>
+      with
       `--enable-blink-features=WebSpeechTimestamps`.
     </p>
   </div>
@@ -178,58 +283,77 @@
     const logEl = document.getElementById('log');
     const btnMic = document.getElementById('btnMic');
     const btnFile = document.getElementById('btnFile');
+    const btnOptions = document.getElementById('btnOptions');
+    const optionsMenu = document.getElementById('optionsMenu');
+    const qualitySelect = document.getElementById('qualitySelect');
+    const txtLang = document.getElementById('txtLang');
     const audioPlayer = document.getElementById('audioPlayer');
-        const timelineScroll = document.getElementById('timelineScroll');
-        const timelineTimeInfo = document.getElementById('timelineTimeInfo');
-        const btnLive = document.getElementById('btnLive');
+    const timelineScroll = document.getElementById('timelineScroll');
+    const timelineTimeInfo = document.getElementById('timelineTimeInfo');
+    const btnLive = document.getElementById('btnLive');
 
-            const getLatencyColor = (ms) => {
-              if (typeof ms !== 'number' || isNaN(ms)) return '#aaa';
-              if (ms <= 350) return '#00ff00';
-              if (ms <= 700) return '#ffff00';
-              if (ms <= 1000) return '#ff9800';
-              return '#ff4444';
-            };
+    btnOptions.addEventListener('click', (e) => {
+      e.stopPropagation();
+      optionsMenu.classList.toggle('open');
+    });
 
-                                  const alignWords = (prevWords, newText, currentLatency) => {
-                                    const newTokens = newText ? newText.split(/\s+/).filter(Boolean) : [];
-                                    if (!prevWords || prevWords.length === 0) {
-                                      return newTokens.map(w => ({ text: w, latency: currentLatency }));
-                                    }
+    document.addEventListener('click', (e) => {
+      if (!optionsMenu.contains(e.target) && e.target !== btnOptions) {
+        optionsMenu.classList.remove('open');
+      }
+    });
 
-                                    // Match common prefix
-                                    let prefixLen = 0;
-                                    while (
-                                      prefixLen < prevWords.length &&
-                                      prefixLen < newTokens.length &&
-                                      prevWords[prefixLen].text === newTokens[prefixLen]
-                                    ) {
-                                      prefixLen++;
-                                    }
+    optionsMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
 
-                                    // Match common suffix
-                                    let suffixLen = 0;
-                                    while (
-                                      suffixLen < (prevWords.length - prefixLen) &&
-                                      suffixLen < (newTokens.length - prefixLen) &&
-                                      prevWords[prevWords.length - 1 - suffixLen].text === newTokens[newTokens.length - 1 - suffixLen]
-                                    ) {
-                                      suffixLen++;
-                                    }
+    const getLatencyColor = (ms) => {
+      if (typeof ms !== 'number' || isNaN(ms)) return '#aaa';
+      if (ms <= 350) return '#00ff00';
+      if (ms <= 700) return '#ffff00';
+      if (ms <= 1000) return '#ff9800';
+      return '#ff4444';
+    };
 
-                                    const result = [];
-                                    for (let i = 0; i < prefixLen; i++) {
-                                      result.push(prevWords[i]);
-                                    }
-                                    const middleEnd = newTokens.length - suffixLen;
-                                    for (let i = prefixLen; i < middleEnd; i++) {
-                                      result.push({ text: newTokens[i], latency: currentLatency });
-                                    }
-                                    for (let i = prevWords.length - suffixLen; i < prevWords.length; i++) {
-                                      result.push(prevWords[i]);
-                                    }
-                                    return result;
-                                  };
+    const alignWords = (prevWords, newText, currentLatency) => {
+      const newTokens = newText ? newText.split(/\s+/).filter(Boolean) : [];
+      if (!prevWords || prevWords.length === 0) {
+        return newTokens.map(w => ({ text: w, latency: currentLatency }));
+      }
+
+      // Match common prefix
+      let prefixLen = 0;
+      while (
+        prefixLen < prevWords.length &&
+        prefixLen < newTokens.length &&
+        prevWords[prefixLen].text === newTokens[prefixLen]
+      ) {
+        prefixLen++;
+      }
+
+      // Match common suffix
+      let suffixLen = 0;
+      while (
+        suffixLen < (prevWords.length - prefixLen) &&
+        suffixLen < (newTokens.length - prefixLen) &&
+        prevWords[prevWords.length - 1 - suffixLen].text === newTokens[newTokens.length - 1 - suffixLen]
+      ) {
+        suffixLen++;
+      }
+
+      const result = [];
+      for (let i = 0; i < prefixLen; i++) {
+        result.push(prevWords[i]);
+      }
+      const middleEnd = newTokens.length - suffixLen;
+      for (let i = prefixLen; i < middleEnd; i++) {
+        result.push({ text: newTokens[i], latency: currentLatency });
+      }
+      for (let i = prevWords.length - suffixLen; i < prevWords.length; i++) {
+        result.push(prevWords[i]);
+      }
+      return result;
+    };
 
     const log = (msg, color = '#eee') => {
       const span = document.createElement('span');
@@ -313,107 +437,154 @@
     let viewEndTime = 0;
     let autoScroll = true;
     let sessionResultOffset = 0;
-
-    // State Tracking
     let isRecognizing = false;
 
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRec();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-    recognition.lang = navigator.language || 'en-US';
+    window.currentRecognition = null;
+    txtLang.value = navigator.language || 'en-US';
 
-    // Log & Store Endpointer Events
     const endpointerEvents = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend'];
-    endpointerEvents.forEach(eventName => {
-      recognition.addEventListener(eventName, (e) => {
-        if (eventName === 'audiostart') {
-          audioOriginTime = e.timeStamp;
-        }
-        log(`[EVENT: ${eventName}] timeStamp: ${e.timeStamp.toFixed(1)}ms`, '#ff9800');
-        endpointerMarkers.push({ name: eventName, time: e.timeStamp });
+
+    function resetRecognitionSession() {
+      if (isRecognizing && window.currentRecognition) {
+        try {
+          window.currentRecognition.abort();
+        } catch (e) {}
+      }
+
+      if (!SpeechRec) return null;
+
+      const recognition = new SpeechRec();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      recognition.lang = txtLang.value.trim() || navigator.language || 'en-US';
+      recognition.quality = qualitySelect.value || undefined;
+
+      // Log & Store Endpointer Events
+      endpointerEvents.forEach(eventName => {
+        recognition.addEventListener(eventName, (e) => {
+          if (eventName === 'audiostart') {
+            audioOriginTime = e.timeStamp;
+          }
+          log(`[EVENT: ${eventName}] timeStamp: ${e.timeStamp.toFixed(1)}ms`, '#ff9800');
+          endpointerMarkers.push({ name: eventName, time: e.timeStamp });
+        });
       });
-    });
 
-    // Session Start
-    recognition.onstart = (e) => {
-      isRecognizing = true;
-      autoScroll = true;
-      btnMic.innerText = "Stop Mic Transcription";
-      btnMic.style.background = "#aa0000"; // Red for active
+      // Session Start
+      recognition.onstart = (e) => {
+        isRecognizing = true;
+        autoScroll = true;
+        btnMic.innerText = "Stop Mic Transcription";
+        btnMic.style.background = "#aa0000"; // Red for active
 
-      audioOriginTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
-      timelineStartTime ??= audioOriginTime;
-      sessionResultOffset = transcripts.length;
-      log(`[STARTED] Stream Start TimeStamp: ${audioOriginTime.toFixed(1)}ms\n`, '#ffffff');
-    };
+        audioOriginTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
+        timelineStartTime ??= audioOriginTime;
+        sessionResultOffset = transcripts.length;
+        log(`[STARTED] Stream Start TimeStamp: ${audioOriginTime.toFixed(1)}ms\n`, '#ffffff');
+      };
 
-    // Session End (Manual or Automatic timeout)
-    recognition.onend = () => {
-      isRecognizing = false;
-      autoScroll = false;
-      stoppedViewEndTime = performance.now();
-      viewEndTime = stoppedViewEndTime;
-      btnMic.innerText = "Start Mic Transcription & Timeline";
-      btnMic.style.background = "#333";
-      log(`[ENDED] Recognition stopped.\n`, '#ffffff');
-    };
+      // Session End (Manual or Automatic timeout)
+      recognition.onend = () => {
+        isRecognizing = false;
+        autoScroll = false;
+        stoppedViewEndTime = performance.now();
+        viewEndTime = stoppedViewEndTime;
+        btnMic.innerText = "Start Mic Transcription & Timeline";
+        btnMic.style.background = "#333";
+        log(`[ENDED] Recognition stopped.\n`, '#ffffff');
+      };
 
-    // Recognition Results Handler
-    recognition.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; ++i) {
-        const result = e.results[i];
-        if (!result || !result[0]) continue;
+      // Recognition Results Handler
+      recognition.onresult = (e) => {
+        for (let i = e.resultIndex; i < e.results.length; ++i) {
+          const result = e.results[i];
+          if (!result || !result[0]) continue;
 
-        const globalId = sessionResultOffset + i;
-        let existing = transcripts.find(t => t.id === globalId);
+          const globalId = sessionResultOffset + i;
+          let existing = transcripts.find(t => t.id === globalId);
 
-        // Do not update or accumulate timestamps on results that have already been finalized
-        if (existing && existing.results[existing.results.length - 1].isFinal) {
-          continue;
+          // Do not update or accumulate timestamps on results that have already been finalized
+          if (existing && existing.results[existing.results.length - 1].isFinal) {
+            continue;
+          }
+
+          result.timeReceived = e.timeStamp;
+
+          // Convert stream offsets to document time origin coordinates per explainer
+          Object.defineProperty(result, 'absoluteAudioStart', {
+            value: (typeof result.audioStartTime === 'number') ? audioOriginTime + result.audioStartTime : undefined,
+            writable: true,
+            configurable: true
+          });
+          Object.defineProperty(result, 'absoluteAudioEnd', {
+            value: (typeof result.audioEndTime === 'number') ? audioOriginTime + result.audioEndTime : undefined,
+            writable: true,
+            configurable: true
+          });
+
+          const asrLatencyMs = (typeof result.absoluteAudioEnd === 'number')
+            ? (result.timeReceived - result.absoluteAudioEnd)
+            : null;
+
+          const newText = result[0].transcript.trim();
+          const prevWords = existing ? existing.words : [];
+          const updatedWords = alignWords(prevWords, newText, asrLatencyMs);
+
+          if (existing) {
+            existing.words = updatedWords;
+            existing.results.push(result);
+          } else {
+            transcripts.push({ id: globalId, words: updatedWords, results: [result] });
+          }
+
+          logResult(result, globalId, updatedWords);
         }
+      };
 
-        result.timeReceived = e.timeStamp;
+      recognition.onerror = (e) => {
+        log(`[ERROR: ${e.error}] ${e.message || ''}`, '#ff4444');
+      };
 
-        // Convert stream offsets to document time origin coordinates per explainer
-        Object.defineProperty(result, 'absoluteAudioStart', {
-          value: (typeof result.audioStartTime === 'number') ? audioOriginTime + result.audioStartTime : undefined,
-          writable: true,
-          configurable: true
-        });
-        Object.defineProperty(result, 'absoluteAudioEnd', {
-          value: (typeof result.audioEndTime === 'number') ? audioOriginTime + result.audioEndTime : undefined,
-          writable: true,
-          configurable: true
-        });
+      recognition.onnomatch = () => {
+        log('[NOMATCH] No speech recognized.', '#ffaa00');
+      };
 
-        const asrLatencyMs = (typeof result.absoluteAudioEnd === 'number')
-          ? (result.timeReceived - result.absoluteAudioEnd)
-          : null;
+      window.currentRecognition = recognition;
+      return recognition;
+    }
 
-        const newText = result[0].transcript.trim();
-        const prevWords = existing ? existing.words : [];
-        const updatedWords = alignWords(prevWords, newText, asrLatencyMs);
+    const checkAvailability = async () => {
+      const recognition = resetRecognitionSession();
+      if (!recognition) return;
 
-        if (existing) {
-          existing.words = updatedWords;
-          existing.results.push(result);
-        } else {
-          transcripts.push({ id: globalId, words: updatedWords, results: [result] });
+      let options = {
+        langs: [recognition.lang],
+        processLocally: true,
+        quality: qualitySelect.value || undefined,
+      };
+      const optionsStr = `${recognition.lang} - ${options.quality}`;
+      if (typeof SpeechRec?.available === 'function') {
+        try {
+          const availability = await SpeechRec.available(options);
+          log(`[AVAILABILITY] ${optionsStr} -> ${availability}`, '#aaffaa');
+          if (availability === 'downloadable') {
+            log(`[DOWNLOADING] ${optionsStr}`, '#aaffaa');
+            const installed = typeof SpeechRec.install === 'function' ? await SpeechRec.install(options) : false;
+            log(`[INSTALL] ${optionsStr} ${installed ? 'SUCCEEDED' : 'FAILED'}`, '#aaffaa');
+          }
+        } catch (err) {
+          log(`[AVAILABILITY ERROR] Options: ${optionsStr} -> ${err.message || err}`, '#ff4444');
         }
-
-        logResult(result, globalId, updatedWords);
+      } else {
+        log(`[AVAILABILITY] SpeechRecognition.available() is not supported. Options: ${optionsStr}`, '#aaaaaa');
       }
     };
 
-    recognition.onerror = (e) => {
-      log(`[ERROR: ${e.error}] ${e.message || ''}`, '#ff4444');
-    };
-
-    recognition.onnomatch = () => {
-      log('[NOMATCH] No speech recognized.', '#ffaa00');
-    };
+    qualitySelect.addEventListener('change', checkAvailability);
+    txtLang.addEventListener('change', checkAvailability);
+    checkAvailability();
 
     // Centralized Initialization
     async function startVisualizationAndMic() {
@@ -438,7 +609,10 @@
       // 2. Start Speech API
       if (!isRecognizing) {
         try {
-          recognition.start();
+          if (!window.currentRecognition) {
+            resetRecognitionSession();
+          }
+          window.currentRecognition.start();
         } catch (e) {
           log(`[ERROR] Failed to start recognition: ${e.message}`, '#ff4444');
         }
@@ -647,68 +821,68 @@
       }
     }
 
-      // Timeline Scrollbar events
-      timelineScroll.oninput = () => {
-        autoScroll = false;
-        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = timelineStartTime || (currentNow - DURATION_MS);
-        const maxTime = currentNow;
-        const minViewEnd = minTime + DURATION_MS;
-        if (maxTime > minViewEnd) {
-          const fraction = timelineScroll.value / 1000;
-          viewEndTime = minViewEnd + fraction * (maxTime - minViewEnd);
-        } else {
-          viewEndTime = maxTime;
-        }
-      };
+    // Timeline Scrollbar events
+    timelineScroll.oninput = () => {
+      autoScroll = false;
+      const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+      const minTime = timelineStartTime || (currentNow - DURATION_MS);
+      const maxTime = currentNow;
+      const minViewEnd = minTime + DURATION_MS;
+      if (maxTime > minViewEnd) {
+        const fraction = timelineScroll.value / 1000;
+        viewEndTime = minViewEnd + fraction * (maxTime - minViewEnd);
+      } else {
+        viewEndTime = maxTime;
+      }
+    };
 
-      btnLive.onclick = () => {
-        autoScroll = true;
-        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        viewEndTime = currentNow;
-        timelineScroll.value = 1000;
-      };
+    btnLive.onclick = () => {
+      autoScroll = true;
+      const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+      viewEndTime = currentNow;
+      timelineScroll.value = 1000;
+    };
 
-      // Canvas Drag and Wheel Scrolling
-      let isDraggingCanvas = false;
-      let dragStartX = 0;
-      let dragStartViewEndTime = 0;
+    // Canvas Drag and Wheel Scrolling
+    let isDraggingCanvas = false;
+    let dragStartX = 0;
+    let dragStartViewEndTime = 0;
 
-      canvas.addEventListener('mousedown', (e) => {
-        isDraggingCanvas = true;
-        dragStartX = e.clientX;
-        dragStartViewEndTime = viewEndTime;
-        autoScroll = false;
-      });
+    canvas.addEventListener('mousedown', (e) => {
+      isDraggingCanvas = true;
+      dragStartX = e.clientX;
+      dragStartViewEndTime = viewEndTime;
+      autoScroll = false;
+    });
 
-      window.addEventListener('mousemove', (e) => {
-        if (!isDraggingCanvas) return;
-        const dx = e.clientX - dragStartX;
-        const dt = (dx / canvas.clientWidth) * DURATION_MS;
-        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = timelineStartTime || (currentNow - DURATION_MS);
-        const minViewEnd = minTime + DURATION_MS;
-        viewEndTime = Math.max(minViewEnd, Math.min(currentNow, dragStartViewEndTime - dt));
-      });
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingCanvas) return;
+      const dx = e.clientX - dragStartX;
+      const dt = (dx / canvas.clientWidth) * DURATION_MS;
+      const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+      const minTime = timelineStartTime || (currentNow - DURATION_MS);
+      const minViewEnd = minTime + DURATION_MS;
+      viewEndTime = Math.max(minViewEnd, Math.min(currentNow, dragStartViewEndTime - dt));
+    });
 
-      window.addEventListener('mouseup', () => {
-        isDraggingCanvas = false;
-      });
+    window.addEventListener('mouseup', () => {
+      isDraggingCanvas = false;
+    });
 
-      canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        autoScroll = false;
-        const dt = (e.deltaX || e.deltaY) * (DURATION_MS / 1000);
-        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = timelineStartTime || (currentNow - DURATION_MS);
-        const minViewEnd = minTime + DURATION_MS;
-        viewEndTime = Math.max(minViewEnd, Math.min(currentNow, viewEndTime + dt));
-      }, { passive: false });
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      autoScroll = false;
+      const dt = (e.deltaX || e.deltaY) * (DURATION_MS / 1000);
+      const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+      const minTime = timelineStartTime || (currentNow - DURATION_MS);
+      const minViewEnd = minTime + DURATION_MS;
+      viewEndTime = Math.max(minViewEnd, Math.min(currentNow, viewEndTime + dt));
+    }, { passive: false });
 
     // Toggle Button Logic
     btnMic.onclick = () => {
       if (isRecognizing) {
-        recognition.stop();
+        window.currentRecognition?.stop();
       } else {
         startVisualizationAndMic();
       }
