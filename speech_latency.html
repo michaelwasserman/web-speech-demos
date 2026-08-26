@@ -12,7 +12,7 @@
       color: #eee;
     }
 
-    button, select {
+    button {
       padding: 10px 15px;
       margin-bottom: 10px;
       margin-right: 10px;
@@ -26,13 +26,93 @@
       vertical-align: middle;
     }
 
-    button:hover, select:hover {
+    button:hover {
       background: #555;
     }
 
-    select option {
+    .options-container {
+      display: inline-block;
+      position: relative;
+      vertical-align: middle;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+
+    .options-container button {
+      margin-right: 0;
+      margin-bottom: 0;
+    }
+
+    .options-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 5px);
+      left: 0;
+      z-index: 100;
+      background: #252525;
+      border: 1px solid #555;
+      border-radius: 6px;
+      padding: 12px 14px;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+      min-width: 280px;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .options-menu.open {
+      display: flex;
+    }
+
+    .options-menu .option-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    .options-menu .option-row label {
+      font-weight: bold;
+      color: #ddd;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .options-menu select,
+    .options-menu input[type="text"] {
+      padding: 6px 10px;
+      margin: 0;
       background: #333;
       color: #fff;
+      border: 1px solid #555;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: inherit;
+      box-sizing: border-box;
+    }
+
+    .options-menu select {
+      cursor: pointer;
+    }
+
+    .options-menu select option {
+      background: #333;
+      color: #fff;
+    }
+
+    .options-menu input[type="text"] {
+      width: 140px;
+    }
+
+    .options-menu input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: #00e5ff;
+      width: 16px;
+      height: 16px;
+      margin: 0;
     }
 
     canvas {
@@ -132,25 +212,42 @@
 <body>
   <button id="btnMic">Start Mic Transcription & Timeline</button>
   <button id="btnFile">Play & Transcribe Audio File</button>
-  <label for="qualitySelect" style="font-weight: bold; margin-left: 5px; margin-right: 5px; vertical-align: middle;">Quality:</label>
-  <select id="qualitySelect">
-    <option value="" selected="true">&lt;none&gt; (undefined)</option>
-    <option value="command">command (SODA)</option>
-    <option value="dictation">dictation (Small Expert)</option>
-  </select>
+  <div class="options-container">
+    <button id="btnOptions" type="button">Options ▾</button>
+    <div id="optionsMenu" class="options-menu">
+      <div class="option-row">
+        <label for="qualitySelect">Quality:</label>
+        <select id="qualitySelect">
+          <option value="">&lt;none&gt; (undefined)</option>
+          <option value="command" selected="true">command (SODA)</option>
+          <option value="dictation">dictation (Small Expert)</option>
+        </select>
+      </div>
+      <div class="option-row">
+        <label for="chkProcessLocally">processLocally:</label>
+        <input type="checkbox" id="chkProcessLocally" checked>
+      </div>
+      <div class="option-row">
+        <label for="txtLang">Language:</label>
+        <input type="text" id="txtLang">
+      </div>
+    </div>
+  </div>
   <a href="https://github.com/michaelwasserman/web-speech-demos" target="_blank">🔗&nbsp;Source</a>
 
   <audio id="audioPlayer" src="https://raw.githubusercontent.com/web-platform-tests/wpt/master/media/speech.wav"
     crossorigin="anonymous"></audio>
 
   <div class="description">
-    <p>Demo exploring <a href="https://webaudio.github.io/web-speech-api" target="_blank">Web Speech API</a> timestamps and
+    <p>Demo exploring <a href="https://webaudio.github.io/web-speech-api" target="_blank">Web Speech API</a> timestamps
+      and
       latency; with support for <a
         href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md"
         target="_blank">proposed</a> SpeechRecognitionResult attributes.
       <br>
       See <a href="https://github.com/WebAudio/web-speech-api/issues/191" target="_blank">Issue #191</a>,
-      and test <a href="https://chromestatus.com/feature/5811907077472256" target="_blank">Chrome's implementation</a> with
+      and test <a href="https://chromestatus.com/feature/5811907077472256" target="_blank">Chrome's implementation</a>
+      with
       `--enable-blink-features=WebSpeechTimestamps`.
     </p>
   </div>
@@ -190,59 +287,78 @@
     const logEl = document.getElementById('log');
     const btnMic = document.getElementById('btnMic');
     const btnFile = document.getElementById('btnFile');
+    const btnOptions = document.getElementById('btnOptions');
+    const optionsMenu = document.getElementById('optionsMenu');
     const qualitySelect = document.getElementById('qualitySelect');
+    const chkProcessLocally = document.getElementById('chkProcessLocally');
+    const txtLang = document.getElementById('txtLang');
     const audioPlayer = document.getElementById('audioPlayer');
-        const timelineScroll = document.getElementById('timelineScroll');
-        const timelineTimeInfo = document.getElementById('timelineTimeInfo');
-        const btnLive = document.getElementById('btnLive');
+    const timelineScroll = document.getElementById('timelineScroll');
+    const timelineTimeInfo = document.getElementById('timelineTimeInfo');
+    const btnLive = document.getElementById('btnLive');
 
-            const getLatencyColor = (ms) => {
-              if (typeof ms !== 'number' || isNaN(ms)) return '#aaa';
-              if (ms <= 350) return '#00ff00';
-              if (ms <= 700) return '#ffff00';
-              if (ms <= 1000) return '#ff9800';
-              return '#ff4444';
-            };
+    btnOptions.addEventListener('click', (e) => {
+      e.stopPropagation();
+      optionsMenu.classList.toggle('open');
+    });
 
-                                  const alignWords = (prevWords, newText, currentLatency) => {
-                                    const newTokens = newText ? newText.split(/\s+/).filter(Boolean) : [];
-                                    if (!prevWords || prevWords.length === 0) {
-                                      return newTokens.map(w => ({ text: w, latency: currentLatency }));
-                                    }
+    document.addEventListener('click', (e) => {
+      if (!optionsMenu.contains(e.target) && e.target !== btnOptions) {
+        optionsMenu.classList.remove('open');
+      }
+    });
 
-                                    // Match common prefix
-                                    let prefixLen = 0;
-                                    while (
-                                      prefixLen < prevWords.length &&
-                                      prefixLen < newTokens.length &&
-                                      prevWords[prefixLen].text === newTokens[prefixLen]
-                                    ) {
-                                      prefixLen++;
-                                    }
+    optionsMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
 
-                                    // Match common suffix
-                                    let suffixLen = 0;
-                                    while (
-                                      suffixLen < (prevWords.length - prefixLen) &&
-                                      suffixLen < (newTokens.length - prefixLen) &&
-                                      prevWords[prevWords.length - 1 - suffixLen].text === newTokens[newTokens.length - 1 - suffixLen]
-                                    ) {
-                                      suffixLen++;
-                                    }
+    const getLatencyColor = (ms) => {
+      if (typeof ms !== 'number' || isNaN(ms)) return '#aaa';
+      if (ms <= 350) return '#00ff00';
+      if (ms <= 700) return '#ffff00';
+      if (ms <= 1000) return '#ff9800';
+      return '#ff4444';
+    };
 
-                                    const result = [];
-                                    for (let i = 0; i < prefixLen; i++) {
-                                      result.push(prevWords[i]);
-                                    }
-                                    const middleEnd = newTokens.length - suffixLen;
-                                    for (let i = prefixLen; i < middleEnd; i++) {
-                                      result.push({ text: newTokens[i], latency: currentLatency });
-                                    }
-                                    for (let i = prevWords.length - suffixLen; i < prevWords.length; i++) {
-                                      result.push(prevWords[i]);
-                                    }
-                                    return result;
-                                  };
+    const alignWords = (prevWords, newText, currentLatency) => {
+      const newTokens = newText ? newText.split(/\s+/).filter(Boolean) : [];
+      if (!prevWords || prevWords.length === 0) {
+        return newTokens.map(w => ({ text: w, latency: currentLatency }));
+      }
+
+      // Match common prefix
+      let prefixLen = 0;
+      while (
+        prefixLen < prevWords.length &&
+        prefixLen < newTokens.length &&
+        prevWords[prefixLen].text === newTokens[prefixLen]
+      ) {
+        prefixLen++;
+      }
+
+      // Match common suffix
+      let suffixLen = 0;
+      while (
+        suffixLen < (prevWords.length - prefixLen) &&
+        suffixLen < (newTokens.length - prefixLen) &&
+        prevWords[prevWords.length - 1 - suffixLen].text === newTokens[newTokens.length - 1 - suffixLen]
+      ) {
+        suffixLen++;
+      }
+
+      const result = [];
+      for (let i = 0; i < prefixLen; i++) {
+        result.push(prevWords[i]);
+      }
+      const middleEnd = newTokens.length - suffixLen;
+      for (let i = prefixLen; i < middleEnd; i++) {
+        result.push({ text: newTokens[i], latency: currentLatency });
+      }
+      for (let i = prevWords.length - suffixLen; i < prevWords.length; i++) {
+        result.push(prevWords[i]);
+      }
+      return result;
+    };
 
     const log = (msg, color = '#eee') => {
       const span = document.createElement('span');
@@ -326,29 +442,32 @@
     let viewEndTime = 0;
     let autoScroll = true;
     let sessionResultOffset = 0;
-
-    // State Tracking
     let isRecognizing = false;
+    let recognition;
 
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRec();
-    recognition.continuous = true;
-    recognition.processLocally = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-    recognition.lang = navigator.language || 'en-US';
+    txtLang.value = navigator.language || 'en-US';
 
-    const checkQualityAvailability = async () => {
-      let options = { langs: [recognition.lang], processLocally: recognition.processLocally, quality: qualitySelect.value ? qualitySelect.value : undefined };
-      const checkAvailableFn = SpeechRec?.available || window.SpeechRecognition?.available || window.webkitSpeechRecognition?.available;
+    const checkAvailability = async () => {
+      const SpeechRec = SpeechRecognition || webkitSpeechRecognition;
+      recognition = new SpeechRec();
+      recognition.continuous = true;
+      recognition.processLocally = chkProcessLocally.checked;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      recognition.lang = txtLang.value.trim();
 
-      if (typeof checkAvailableFn === 'function') {
+      let options = {
+        langs: [recognition.lang],
+        processLocally: recognition.processLocally,
+        quality: qualitySelect.value || undefined,
+      };
+      if (typeof SpeechRec?.available === 'function') {
         try {
-          const availability = await checkAvailableFn.call(SpeechRec, options);
+          const availability = await SpeechRec?.available(options);
           log(`[AVAILABILITY] Options: ${JSON.stringify(options)} -> ${availability}`, '#aaffaa');
           if (availability === 'downloadable') {
             log(`[DOWNLOADING] Options: ${JSON.stringify(options)} -> ${availability}`, '#aaffaa');
-            const installed = await SpeechRecognition.install(options);
+            const installed = await SpeechRec?.install(options);
             if (installed) {
               log(`[INSTALLED] Options: ${JSON.stringify(options)} -> ${installed}`, '#aaffaa');
             } else {
@@ -363,12 +482,10 @@
       }
     };
 
-    qualitySelect.addEventListener('change', () => {
-      checkQualityAvailability();
-    });
-
-    // Check initial availability
-    checkQualityAvailability();
+    qualitySelect.addEventListener('change', checkAvailability);
+    chkProcessLocally.addEventListener('change', checkAvailability);
+    txtLang.addEventListener('change', checkAvailability);
+    checkAvailability();
 
     // Log & Store Endpointer Events
     const endpointerEvents = ['audiostart', 'soundstart', 'speechstart', 'speechend', 'soundend', 'audioend'];
@@ -484,6 +601,8 @@
       // 2. Start Speech API
       if (!isRecognizing) {
         try {
+          recognition.lang = txtLang.value.trim() || navigator.language || 'en-US';
+          recognition.processLocally = chkProcessLocally.checked;
           recognition.quality = qualitySelect.value ? qualitySelect.value : undefined;
           recognition.start();
         } catch (e) {
@@ -694,63 +813,63 @@
       }
     }
 
-      // Timeline Scrollbar events
-      timelineScroll.oninput = () => {
-        autoScroll = false;
-        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = timelineStartTime || (currentNow - DURATION_MS);
-        const maxTime = currentNow;
-        const minViewEnd = minTime + DURATION_MS;
-        if (maxTime > minViewEnd) {
-          const fraction = timelineScroll.value / 1000;
-          viewEndTime = minViewEnd + fraction * (maxTime - minViewEnd);
-        } else {
-          viewEndTime = maxTime;
-        }
-      };
+    // Timeline Scrollbar events
+    timelineScroll.oninput = () => {
+      autoScroll = false;
+      const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+      const minTime = timelineStartTime || (currentNow - DURATION_MS);
+      const maxTime = currentNow;
+      const minViewEnd = minTime + DURATION_MS;
+      if (maxTime > minViewEnd) {
+        const fraction = timelineScroll.value / 1000;
+        viewEndTime = minViewEnd + fraction * (maxTime - minViewEnd);
+      } else {
+        viewEndTime = maxTime;
+      }
+    };
 
-      btnLive.onclick = () => {
-        autoScroll = true;
-        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        viewEndTime = currentNow;
-        timelineScroll.value = 1000;
-      };
+    btnLive.onclick = () => {
+      autoScroll = true;
+      const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+      viewEndTime = currentNow;
+      timelineScroll.value = 1000;
+    };
 
-      // Canvas Drag and Wheel Scrolling
-      let isDraggingCanvas = false;
-      let dragStartX = 0;
-      let dragStartViewEndTime = 0;
+    // Canvas Drag and Wheel Scrolling
+    let isDraggingCanvas = false;
+    let dragStartX = 0;
+    let dragStartViewEndTime = 0;
 
-      canvas.addEventListener('mousedown', (e) => {
-        isDraggingCanvas = true;
-        dragStartX = e.clientX;
-        dragStartViewEndTime = viewEndTime;
-        autoScroll = false;
-      });
+    canvas.addEventListener('mousedown', (e) => {
+      isDraggingCanvas = true;
+      dragStartX = e.clientX;
+      dragStartViewEndTime = viewEndTime;
+      autoScroll = false;
+    });
 
-      window.addEventListener('mousemove', (e) => {
-        if (!isDraggingCanvas) return;
-        const dx = e.clientX - dragStartX;
-        const dt = (dx / canvas.clientWidth) * DURATION_MS;
-        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = timelineStartTime || (currentNow - DURATION_MS);
-        const minViewEnd = minTime + DURATION_MS;
-        viewEndTime = Math.max(minViewEnd, Math.min(currentNow, dragStartViewEndTime - dt));
-      });
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingCanvas) return;
+      const dx = e.clientX - dragStartX;
+      const dt = (dx / canvas.clientWidth) * DURATION_MS;
+      const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+      const minTime = timelineStartTime || (currentNow - DURATION_MS);
+      const minViewEnd = minTime + DURATION_MS;
+      viewEndTime = Math.max(minViewEnd, Math.min(currentNow, dragStartViewEndTime - dt));
+    });
 
-      window.addEventListener('mouseup', () => {
-        isDraggingCanvas = false;
-      });
+    window.addEventListener('mouseup', () => {
+      isDraggingCanvas = false;
+    });
 
-      canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        autoScroll = false;
-        const dt = (e.deltaX || e.deltaY) * (DURATION_MS / 1000);
-        const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
-        const minTime = timelineStartTime || (currentNow - DURATION_MS);
-        const minViewEnd = minTime + DURATION_MS;
-        viewEndTime = Math.max(minViewEnd, Math.min(currentNow, viewEndTime + dt));
-      }, { passive: false });
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      autoScroll = false;
+      const dt = (e.deltaX || e.deltaY) * (DURATION_MS / 1000);
+      const currentNow = isRecognizing ? performance.now() : (stoppedViewEndTime || performance.now());
+      const minTime = timelineStartTime || (currentNow - DURATION_MS);
+      const minViewEnd = minTime + DURATION_MS;
+      viewEndTime = Math.max(minViewEnd, Math.min(currentNow, viewEndTime + dt));
+    }, { passive: false });
 
     // Toggle Button Logic
     btnMic.onclick = () => {
