@@ -134,7 +134,7 @@
   <button id="btnFile">Play & Transcribe Audio File</button>
   <label for="qualitySelect" style="font-weight: bold; margin-left: 5px; margin-right: 5px; vertical-align: middle;">Quality:</label>
   <select id="qualitySelect">
-    <option value="">&lt;none&gt; (undefined)</option>
+    <option value="" selected="true">&lt;none&gt; (undefined)</option>
     <option value="command">command (SODA)</option>
     <option value="dictation">dictation (Small Expert)</option>
   </select>
@@ -333,33 +333,33 @@
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRec();
     recognition.continuous = true;
+    recognition.processLocally = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
     recognition.lang = navigator.language || 'en-US';
 
     const checkQualityAvailability = async () => {
-      const selectedQuality = qualitySelect.value;
-      if (selectedQuality) {
-        recognition.quality = selectedQuality;
-      } else {
-        delete recognition.quality;
-        recognition.quality = undefined;
-      }
-
-      const qualityLabel = selectedQuality ? `"${selectedQuality}"` : '<none> (undefined)';
+      let options = { langs: [recognition.lang], processLocally: recognition.processLocally, quality: qualitySelect.value ? qualitySelect.value : undefined };
       const checkAvailableFn = SpeechRec?.available || window.SpeechRecognition?.available || window.webkitSpeechRecognition?.available;
 
       if (typeof checkAvailableFn === 'function') {
         try {
-          const options = { langs: [recognition.lang], quality: recognition.quality };
           const availability = await checkAvailableFn.call(SpeechRec, options);
-          const availStr = typeof availability === 'object' ? JSON.stringify(availability) : String(availability);
-          log(`[AVAILABILITY] Quality: ${qualityLabel}, Lang: ${recognition.lang} -> ${availStr}`, '#00e5ff');
+          log(`[AVAILABILITY] Options: ${JSON.stringify(options)} -> ${availability}`, '#aaffaa');
+          if (availability === 'downloadable') {
+            log(`[DOWNLOADING] Options: ${JSON.stringify(options)} -> ${availability}`, '#aaffaa');
+            const installed = await SpeechRecognition.install(options);
+            if (installed) {
+              log(`[INSTALLED] Options: ${JSON.stringify(options)} -> ${installed}`, '#aaffaa');
+            } else {
+              log(`[INSTALL FAILED] Options: ${JSON.stringify(options)} -> ${installed}`, '#ff4444');
+            }
+          }
         } catch (err) {
-          log(`[AVAILABILITY ERROR] Quality: ${qualityLabel}, Lang: ${recognition.lang} -> ${err.message || err}`, '#ff4444');
+          log(`[AVAILABILITY ERROR] Options: ${JSON.stringify(options)} -> ${err.message || err}`, '#ff4444');
         }
       } else {
-        log(`[AVAILABILITY] SpeechRecognition.available() is not supported. Quality set to: ${qualityLabel}`, '#aaaaaa');
+        log(`[AVAILABILITY] SpeechRecognition.available() is not supported. Options: ${JSON.stringify(options)}`, '#aaaaaa');
       }
     };
 
@@ -484,12 +484,7 @@
       // 2. Start Speech API
       if (!isRecognizing) {
         try {
-          if (qualitySelect.value) {
-            recognition.quality = qualitySelect.value;
-          } else {
-            delete recognition.quality;
-            recognition.quality = undefined;
-          }
+          recognition.quality = qualitySelect.value ? qualitySelect.value : undefined;
           recognition.start();
         } catch (e) {
           log(`[ERROR] Failed to start recognition: ${e.message}`, '#ff4444');
