@@ -264,10 +264,10 @@
     <span style="color: #ffffff;">■ Transcribed Text</span>
     <span style="color: #00ccff;">■ <a
         href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md#web-idl-definition"
-        target="_blank">audioStartTime</a></span>
+        target="_blank">speechStartTime</a></span>
     <span style="color: #ff00ff;">■ <a
         href="https://github.com/WebAudio/web-speech-api/blob/main/explainers/speech-recognition-result-timestamps.md#web-idl-definition"
-        target="_blank">audioEndTime</a></span><br>
+        target="_blank">speechEndTime</a></span><br>
     <span style="color: #888; margin-left: 8px;">Latency:</span>
     <span style="color: #00ff00;">■ ≤350ms</span>
     <span style="color: #ffff00;">■ ≤700ms</span>
@@ -396,21 +396,26 @@
       quoteCloseSpan.textContent = '"';
       container.appendChild(quoteCloseSpan);
 
-      let textContent = `\n ↳ ev.timeStamp    : ${timeReceived.toFixed(1)}ms`;
-
-      if (typeof result.absoluteAudioStart === 'number') {
-        textContent += `\n ↳ audioStartTime (absolute) : ${result.absoluteAudioStart.toFixed(1)}ms`;
+      let textContent = `\n ↳ received (now)  : ${timeReceived.toFixed(1)}ms`;
+      if (typeof result.eventTimeStamp === 'number') {
+        textContent += `\n ↳ ev.timeStamp    : ${result.eventTimeStamp.toFixed(1)}ms`;
       }
-      if (typeof result.absoluteAudioEnd === 'number') {
-        textContent += `\n ↳ audioEndTime (absolute)   : ${result.absoluteAudioEnd.toFixed(1)}ms\n ↳ Latency (Event - AudioEnd): `;
+
+      if (typeof result.absoluteSpeechStart === 'number') {
+        const rawStart = (typeof result.speechStartTime === 'number') ? `${result.speechStartTime.toFixed(3)}s, ` : '';
+        textContent += `\n ↳ speechStartTime : ${rawStart}abs ${result.absoluteSpeechStart.toFixed(1)}ms`;
+      }
+      if (typeof result.absoluteSpeechEnd === 'number') {
+        const rawEnd = (typeof result.speechEndTime === 'number') ? `${result.speechEndTime.toFixed(3)}s, ` : '';
+        textContent += `\n ↳ speechEndTime   : ${rawEnd}abs ${result.absoluteSpeechEnd.toFixed(1)}ms\n ↳ Latency (Received - SpeechEnd): `;
       }
 
       const detailsSpan = document.createElement('span');
       detailsSpan.textContent = textContent;
       container.appendChild(detailsSpan);
 
-      if (typeof result.absoluteAudioEnd === 'number') {
-        const latency = timeReceived - result.absoluteAudioEnd;
+      if (typeof result.absoluteSpeechEnd === 'number') {
+        const latency = timeReceived - result.absoluteSpeechEnd;
         const badge = document.createElement('span');
         badge.style.background = getLatencyColor(latency);
         badge.style.color = '#111';
@@ -498,6 +503,9 @@
 
       // Recognition Results Handler
       recognition.onresult = (e) => {
+        // Use performance.now() for actual JS delivery time; after crrev.com/c/8409366,
+        // e.timeStamp reflects the recognized speech end time rather than dispatch time.
+        const receivedNow = performance.now();
         for (let i = e.resultIndex; i < e.results.length; ++i) {
           const result = e.results[i];
           if (!result || !result[0]) continue;
@@ -510,22 +518,37 @@
             continue;
           }
 
-          result.timeReceived = e.timeStamp;
+          result.timeReceived = receivedNow;
+          result.eventTimeStamp = e.timeStamp;
+
+          // speechStartTime/speechEndTime are non-nullable doubles in seconds (0.0 sentinel when
+          // unpopulated, per crrev.com/c/8408547). Fall back to legacy audioStartTime/audioEndTime (ms).
+          let startOffsetMs;
+          let endOffsetMs;
+          if (typeof result.speechStartTime === 'number' && typeof result.speechEndTime === 'number') {
+            if (result.speechStartTime > 0 || result.speechEndTime > 0) {
+              startOffsetMs = result.speechStartTime * 1000;
+              endOffsetMs = result.speechEndTime * 1000;
+            }
+          } else if (typeof result.audioStartTime === 'number' || typeof result.audioEndTime === 'number') {
+            startOffsetMs = result.audioStartTime ?? undefined;
+            endOffsetMs = result.audioEndTime ?? undefined;
+          }
 
           // Convert stream offsets to document time origin coordinates per explainer
-          Object.defineProperty(result, 'absoluteAudioStart', {
-            value: (typeof result.audioStartTime === 'number') ? audioOriginTime + result.audioStartTime : undefined,
+          Object.defineProperty(result, 'absoluteSpeechStart', {
+            value: (typeof startOffsetMs === 'number') ? audioOriginTime + startOffsetMs : undefined,
             writable: true,
             configurable: true
           });
-          Object.defineProperty(result, 'absoluteAudioEnd', {
-            value: (typeof result.audioEndTime === 'number') ? audioOriginTime + result.audioEndTime : undefined,
+          Object.defineProperty(result, 'absoluteSpeechEnd', {
+            value: (typeof endOffsetMs === 'number') ? audioOriginTime + endOffsetMs : undefined,
             writable: true,
             configurable: true
           });
 
-          const asrLatencyMs = (typeof result.absoluteAudioEnd === 'number')
-            ? (result.timeReceived - result.absoluteAudioEnd)
+          const asrLatencyMs = (typeof result.absoluteSpeechEnd === 'number')
+            ? (result.timeReceived - result.absoluteSpeechEnd)
             : null;
 
           const newText = result[0].transcript.trim();
@@ -805,17 +828,17 @@
         };
 
         for (const r of t.results) {
-          // Event timestamp
+          // Result received timestamp
           drawArrow(r.timeReceived, r.isFinal ? '#6666ff' : '#aaaaaa');
 
-          // audioStartTime (absoluteAudioStart)
-          if (typeof r.absoluteAudioStart === 'number') {
-            drawArrow(r.absoluteAudioStart, '#00ccff');
+          // speechStartTime (absoluteSpeechStart)
+          if (typeof r.absoluteSpeechStart === 'number') {
+            drawArrow(r.absoluteSpeechStart, '#00ccff');
           }
 
-          // audioEndTime (absoluteAudioEnd)
-          if (typeof r.absoluteAudioEnd === 'number') {
-            drawArrow(r.absoluteAudioEnd, '#ff00ff');
+          // speechEndTime (absoluteSpeechEnd)
+          if (typeof r.absoluteSpeechEnd === 'number') {
+            drawArrow(r.absoluteSpeechEnd, '#ff00ff');
           }
         }
       }
