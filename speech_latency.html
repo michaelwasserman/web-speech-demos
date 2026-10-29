@@ -227,6 +227,13 @@
         <label for="txtLang">language:</label>
         <input type="text" id="txtLang">
       </div>
+      <div class="option-row">
+        <label for="originSelect">timeline origin:</label>
+        <select id="originSelect">
+          <option value="start" selected="true">session start (onstart)</option>
+          <option value="audiostart">audio start (audiostart)</option>
+        </select>
+      </div>
     </div>
   </div>
   <a href="https://github.com/michaelwasserman/web-speech-demos" target="_blank">🔗&nbsp;Source</a>
@@ -287,6 +294,7 @@
     const optionsMenu = document.getElementById('optionsMenu');
     const qualitySelect = document.getElementById('qualitySelect');
     const txtLang = document.getElementById('txtLang');
+    const originSelect = document.getElementById('originSelect');
     const audioPlayer = document.getElementById('audioPlayer');
     const timelineScroll = document.getElementById('timelineScroll');
     const timelineTimeInfo = document.getElementById('timelineTimeInfo');
@@ -437,12 +445,30 @@
     let transcripts = [];
     let endpointerMarkers = [];
     let timelineStartTime = null;
+    let sessionStartTime = 0;
+    let audioStartTime = 0;
     let audioOriginTime = 0;
     let stoppedViewEndTime = 0;
     let viewEndTime = 0;
     let autoScroll = true;
     let sessionResultOffset = 0;
     let isRecognizing = false;
+
+    function getAudioOrigin() {
+      return (originSelect.value === 'audiostart' && audioStartTime) ? audioStartTime : sessionStartTime;
+    }
+
+    function updateOrigins() {
+      audioOriginTime = getAudioOrigin();
+      for (const t of transcripts) {
+        for (const r of t.results) {
+          if (typeof r.startOffsetMs === 'number') r.absoluteSpeechStart = audioOriginTime + r.startOffsetMs;
+          if (typeof r.endOffsetMs === 'number') r.absoluteSpeechEnd = audioOriginTime + r.endOffsetMs;
+        }
+      }
+    }
+
+    originSelect.addEventListener('change', updateOrigins);
 
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     window.currentRecognition = null;
@@ -470,13 +496,13 @@
       endpointerEvents.forEach(eventName => {
         recognition.addEventListener(eventName, (e) => {
           if (eventName === 'audiostart') {
-            // Keep audioOriginTime anchored to onstart (or initialize if not set),
-            // avoiding the ~150-250ms buffering/IPC delay of audiostart.
-            const delay = audioOriginTime ? (e.timeStamp - audioOriginTime).toFixed(1) : null;
-            audioOriginTime = audioOriginTime || e.timeStamp;
+            audioStartTime = e.timeStamp;
+            audioOriginTime = getAudioOrigin();
+            const delay = sessionStartTime ? (audioStartTime - sessionStartTime).toFixed(1) : null;
             const delayMsg = delay !== null ? ` (+${delay}ms after onstart)` : '';
             log(`[EVENT: audiostart] timeStamp: ${e.timeStamp.toFixed(1)}ms${delayMsg}`, '#ff9800');
             endpointerMarkers.push({ name: eventName, time: e.timeStamp });
+            updateOrigins();
             return;
           }
           log(`[EVENT: ${eventName}] timeStamp: ${e.timeStamp.toFixed(1)}ms`, '#ff9800');
@@ -491,10 +517,11 @@
         btnMic.innerText = "Stop Mic Transcription";
         btnMic.style.background = "#aa0000"; // Red for active
 
-        audioOriginTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
-        timelineStartTime ??= audioOriginTime;
+        sessionStartTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : performance.now();
+        audioOriginTime = getAudioOrigin();
+        timelineStartTime ??= sessionStartTime;
         sessionResultOffset = transcripts.length;
-        log(`[STARTED] Stream Start TimeStamp: ${audioOriginTime.toFixed(1)}ms\n`, '#ffffff');
+        log(`[STARTED] Stream Start TimeStamp: ${sessionStartTime.toFixed(1)}ms (Origin: ${audioOriginTime.toFixed(1)}ms)\n`, '#ffffff');
       };
 
       // Session End (Manual or Automatic timeout)
@@ -543,7 +570,11 @@
             endOffsetMs = result.audioEndTime ?? undefined;
           }
 
+          result.startOffsetMs = startOffsetMs;
+          result.endOffsetMs = endOffsetMs;
+
           // Convert stream offsets to document time origin coordinates per explainer
+          audioOriginTime = getAudioOrigin();
           Object.defineProperty(result, 'absoluteSpeechStart', {
             value: (typeof startOffsetMs === 'number') ? audioOriginTime + startOffsetMs : undefined,
             writable: true,
