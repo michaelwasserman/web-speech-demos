@@ -470,7 +470,14 @@
       endpointerEvents.forEach(eventName => {
         recognition.addEventListener(eventName, (e) => {
           if (eventName === 'audiostart') {
-            audioOriginTime = e.timeStamp;
+            // Keep audioOriginTime anchored to onstart (or initialize if not set),
+            // avoiding the ~150-250ms buffering/IPC delay of audiostart.
+            const delay = audioOriginTime ? (e.timeStamp - audioOriginTime).toFixed(1) : null;
+            audioOriginTime = audioOriginTime || e.timeStamp;
+            const delayMsg = delay !== null ? ` (+${delay}ms after onstart)` : '';
+            log(`[EVENT: audiostart] timeStamp: ${e.timeStamp.toFixed(1)}ms${delayMsg}`, '#ff9800');
+            endpointerMarkers.push({ name: eventName, time: e.timeStamp });
+            return;
           }
           log(`[EVENT: ${eventName}] timeStamp: ${e.timeStamp.toFixed(1)}ms`, '#ff9800');
           endpointerMarkers.push({ name: eventName, time: e.timeStamp });
@@ -498,6 +505,7 @@
         viewEndTime = stoppedViewEndTime;
         btnMic.innerText = "Start Mic Transcription & Timeline";
         btnMic.style.background = "#333";
+        window.currentRecognition = null;
         log(`[ENDED] Recognition stopped.\n`, '#ffffff');
       };
 
@@ -632,9 +640,7 @@
       // 2. Start Speech API
       if (!isRecognizing) {
         try {
-          if (!window.currentRecognition) {
-            resetRecognitionSession();
-          }
+          resetRecognitionSession();
           window.currentRecognition.start();
         } catch (e) {
           log(`[ERROR] Failed to start recognition: ${e.message}`, '#ff4444');
